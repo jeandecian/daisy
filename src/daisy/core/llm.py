@@ -55,3 +55,15 @@ class LocalBrain:
             self.store.save(self.session)
 
         return reply
+
+    def new_session(self) -> None:
+        self.session: ChatSession = ChatSession()
+        self.session.messages.append({"role": "system", "content": self.system_prompt})
+
+    def load_session(self, session_id: str) -> bool:
+        loaded: ChatSession | None = self.store.load(session_id)
+        if loaded:
+            self.session = loaded
+            return True
+
+        return False

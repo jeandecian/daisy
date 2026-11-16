@@ -1,16 +1,22 @@
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QPushButton,
+    QSplitter,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from daisy.core.llm import LocalBrain
+from daisy.core.storage import ChatSession
+
+DAISY: str = "D.A.I.S.Y."
 
 
 class BrainWorker(QThread):
@@ -32,8 +38,28 @@ class DaisyWindow(QMainWindow):
         self.brain: LocalBrain = brain
         self.worker: BrainWorker | None = None
 
-        self.setWindowTitle("D.A.I.S.Y.")
-        self.resize(520, 640)
+        self.setWindowTitle(DAISY)
+        self.resize(760, 640)
+
+        splitter: QSplitter = QSplitter(Qt.Orientation.Horizontal)
+
+        sidebar_widget: QWidget = QWidget()
+        sidebar_layout: QVBoxLayout = QVBoxLayout(sidebar_widget)
+        sidebar_layout.setContentsMargins(8, 8, 8, 8)
+
+        self.new_chat_btn: QPushButton = QPushButton("+ New Chat")
+        self.new_chat_btn.clicked.connect(self.on_new_chat)
+        sidebar_layout.addWidget(self.new_chat_btn)
+
+        self.session_list: QListWidget = QListWidget()
+        self.session_list.itemClicked.connect(self.on_session_selected)
+        sidebar_layout.addWidget(self.session_list)
+
+        splitter.addWidget(sidebar_widget)
+
+        chat_container: QWidget = QWidget()
+        chat_layout: QVBoxLayout = QVBoxLayout(chat_container)
+        chat_layout.setContentsMargins(8, 8, 8, 8)
 
         self.chat_display: QTextEdit = QTextEdit()
         self.chat_display.setReadOnly(True)
@@ -51,14 +77,60 @@ class DaisyWindow(QMainWindow):
         input_row.addWidget(self.input_field)
         input_row.addWidget(self.send_button)
 
-        layout: QVBoxLayout = QVBoxLayout()
-        layout.addWidget(self.chat_display)
-        layout.addWidget(self.status_label)
-        layout.addLayout(input_row)
+        chat_layout.addWidget(self.chat_display)
+        chat_layout.addWidget(self.status_label)
+        chat_layout.addLayout(input_row)
 
-        container: QWidget = QWidget()
-        container.setLayout(layout)
-        self.setCentralWidget(container)
+        splitter.addWidget(chat_container)
+        splitter.setSizes([200, 560])
+
+        self.setCentralWidget(splitter)
+
+        self.refresh_session_list()
+        self._render_current_session()
+
+    def refresh_session_list(self) -> None:
+        self.session_list.clear()
+
+        sessions: list[ChatSession] = self.brain.store.list_sessions()
+        for session in sessions:
+            display_text: str = f"{session.title}\n({session.updated_at[11:16]})"
+            item: QListWidgetItem = QListWidgetItem(display_text)
+            item.setData(Qt.ItemDataRole.UserRole, session.id)
+            self.session_list.addItem(item)
+
+            if session.id == self.brain.session.id:
+                item.setSelected(True)
+
+    def _render_current_session(self) -> None:
+        self.chat_display.clear()
+
+        for msg in self.brain.session.messages:
+            role: str | None = msg.get("role")
+            content: str = msg.get("content", "")
+            if role == "user":
+                self._append_message("You", content)
+            elif role == "assistant":
+                self._append_message(DAISY, content)
+
+    def on_new_chat(self) -> None:
+        if self.worker and self.worker.isRunning():
+            return
+
+        self.brain.new_session()
+        self._render_current_session()
+        self.refresh_session_list()
+        self.status_label.setText("Ready")
+
+    def on_session_selected(self, item: QListWidgetItem) -> None:
+        if self.worker and self.worker.isRunning():
+            return
+
+        session_id: str = item.data(Qt.ItemDataRole.UserRole)
+        if session_id and self.brain.load_session(session_id):
+            self._render_current_session()
+            self.refresh_session_list()
+            self.status_label.setText("Ready")
 
     def send_message(self) -> None:
         prompt: str = self.input_field.text().strip()
@@ -74,8 +146,9 @@ class DaisyWindow(QMainWindow):
         self.worker.start()
 
     def _on_reply(self, reply: str) -> None:
-        self._append_message("D.A.I.S.Y.", reply)
+        self._append_message(DAISY, reply)
         self._set_busy(False, "Ready")
+        self.refresh_session_list()
 
     def _append_message(self, sender: str, text: str) -> None:
         self.chat_display.append(f"<b>{sender}:</b> {text}<br>")
@@ -83,6 +156,8 @@ class DaisyWindow(QMainWindow):
     def _set_busy(self, busy: bool, status: str) -> None:
         self.input_field.setEnabled(not busy)
         self.send_button.setEnabled(not busy)
+        self.new_chat_btn.setEnabled(not busy)
+        self.session_list.setEnabled(not busy)
         self.status_label.setText(status)
         if not busy:
             self.input_field.setFocus()
