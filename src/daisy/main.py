@@ -1,12 +1,14 @@
+import sys
+
+from PySide6.QtWidgets import QApplication
+
 from daisy.core.llm import LocalBrain
+from daisy.ui.window import DaisyWindow
+
+app: QApplication = QApplication(sys.argv)
 
 brain: LocalBrain = LocalBrain()
+window: DaisyWindow = DaisyWindow(brain)
+window.show()
 
-while True:
-    user_input: str = input("[INPUT] ")
-    if user_input == "exit":
-        break
-
-    reply: str = brain.chat(user_input, remember=True)
-
-    print("[DAISY]", reply)
+sys.exit(app.exec())
