@@ -2,7 +2,11 @@ from daisy.core.llm import LocalBrain
 
 brain: LocalBrain = LocalBrain()
 
-user_input: str = input("[INPUT] ")
-answer: str = brain.ask(user_input)
+while True:
+    user_input: str = input("[INPUT] ")
+    if user_input == "exit":
+        break
 
-print("[DAISY]", answer)
+    reply: str = brain.chat(user_input, remember=True)
+
+    print("[DAISY]", reply)

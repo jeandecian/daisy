@@ -19,17 +19,26 @@ class LocalBrain:
             {"role": "system", "content": self.system_prompt}
         ]
 
-    def ask(self, prompt: str):
+    def chat(self, prompt: str, remember: bool = True) -> str:
+        user_msg: dict[str, str] = {"role": "user", "content": prompt}
+        messages: list[dict[str, str]] = (
+            [*self.history, user_msg]
+            if remember
+            else [{"role": "system", "content": self.system_prompt}, user_msg]
+        )
+
         try:
             response: ChatResponse = ollama.chat(  # type: ignore
                 model=self.model,
-                messages=[
-                    {"role": "system", "content": self.system_prompt},
-                    {"role": "user", "content": prompt},
-                ],
+                messages=messages,
             )
 
         except ConnectionError as e:
             return str(e)
 
-        return response["message"]["content"]
+        reply: str = response["message"]["content"]
+
+        if remember:
+            self.history.extend([user_msg, {"role": "assistant", "content": reply}])
+
+        return reply
