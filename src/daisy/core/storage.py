@@ -18,7 +18,7 @@ class ChatSession:
     title: str = "New Chat"
     created_at: str = field(default_factory=_now_iso)
     updated_at: str = field(default_factory=_now_iso)
-    messages: list[dict[str, str]] = field(default_factory=list[dict[str, str]])
+    messages: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]])
 
     def auto_title(self) -> None:
         if self.title != "New Chat":

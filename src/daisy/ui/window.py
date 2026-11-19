@@ -1,5 +1,8 @@
+from typing import Any
+
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -21,6 +24,7 @@ DAISY: str = "D.A.I.S.Y."
 
 class BrainWorker(QThread):
     reply_ready: Signal = Signal(str)
+    tool_called: Signal = Signal(str, dict)
 
     def __init__(self, brain: LocalBrain, prompt: str):
         super().__init__()
@@ -28,7 +32,10 @@ class BrainWorker(QThread):
         self.prompt: str = prompt
 
     def run(self) -> None:
-        reply: str = self.brain.chat(self.prompt)
+        reply: str = self.brain.chat(
+            self.prompt,
+            on_tool_call=self.tool_called.emit,
+        )
         self.reply_ready.emit(reply)
 
 
@@ -39,7 +46,7 @@ class DaisyWindow(QMainWindow):
         self.worker: BrainWorker | None = None
 
         self.setWindowTitle(DAISY)
-        self.resize(760, 640)
+        self.resize(960, 640)
 
         splitter: QSplitter = QSplitter(Qt.Orientation.Horizontal)
 
@@ -82,12 +89,36 @@ class DaisyWindow(QMainWindow):
         chat_layout.addLayout(input_row)
 
         splitter.addWidget(chat_container)
-        splitter.setSizes([200, 560])
+
+        tools_widget: QWidget = QWidget()
+        tools_layout: QVBoxLayout = QVBoxLayout(tools_widget)
+        tools_layout.setContentsMargins(8, 8, 8, 8)
+
+        tools_header: QLabel = QLabel("Available Tools")
+        tools_header.setStyleSheet("font-weight: bold;")
+        tools_layout.addWidget(tools_header)
+
+        self.tools_list: QListWidget = QListWidget()
+        self.tools_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.tools_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        tools_layout.addWidget(self.tools_list)
+
+        splitter.addWidget(tools_widget)
+        splitter.setSizes([190, 570, 200])
 
         self.setCentralWidget(splitter)
 
+        self.refresh_tools_list()
         self.refresh_session_list()
         self._render_current_session()
+
+    def refresh_tools_list(self) -> None:
+        self.tools_list.clear()
+
+        for tool_name, label in self.brain.tools.display_names():
+            item: QListWidgetItem = QListWidgetItem(label)
+            item.setToolTip(tool_name)
+            self.tools_list.addItem(item)
 
     def refresh_session_list(self) -> None:
         self.session_list.clear()
@@ -110,8 +141,12 @@ class DaisyWindow(QMainWindow):
             content: str = msg.get("content", "")
             if role == "user":
                 self._append_message("You", content)
-            elif role == "assistant":
+            elif role == "assistant" and content:
                 self._append_message(DAISY, content)
+            elif role == "tool":
+                tool_name: str = msg.get("tool_name", "unknown")
+                tool_args: dict[str, Any] = msg.get("tool_args", {})
+                self._append_tool_action(tool_name, tool_args)
 
     def on_new_chat(self) -> None:
         if self.worker and self.worker.isRunning():
@@ -142,8 +177,13 @@ class DaisyWindow(QMainWindow):
         self._append_message("You", prompt)
 
         self.worker = BrainWorker(self.brain, prompt)
+        self.worker.tool_called.connect(self._on_tool_called)
         self.worker.reply_ready.connect(self._on_reply)
         self.worker.start()
+
+    def _on_tool_called(self, tool_name: str, tool_args: dict[str, Any]) -> None:
+        self.status_label.setText(f"Running {tool_name}...")
+        self._append_tool_action(tool_name, tool_args)
 
     def _on_reply(self, reply: str) -> None:
         self._append_message(DAISY, reply)
@@ -152,6 +192,14 @@ class DaisyWindow(QMainWindow):
 
     def _append_message(self, sender: str, text: str) -> None:
         self.chat_display.append(f"<b>{sender}:</b> {text}<br>")
+
+    def _append_tool_action(self, tool_name: str, tool_args: dict[str, Any]) -> None:
+        args_str: str = ", ".join(f"{k}={v!r}" for k, v in tool_args.items())
+        self.chat_display.append(
+            f"<span style='color: #888888; font-size: 11px;'>"
+            f"⚙ <i>Used tool: <b>{tool_name}({args_str})</b></i>"
+            f"</span><br>"
+        )
 
     def _set_busy(self, busy: bool, status: str) -> None:
         self.input_field.setEnabled(not busy)
