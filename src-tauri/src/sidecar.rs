@@ -245,15 +245,16 @@ impl Drop for Sidecar {
     }
 }
 
-/// Stops the current sidecar, starts a fresh one with a new token, and waits for its READY port.
+/// Replaces the live sidecar with a fresh one and waits for its READY port.
+///
+/// The slot lock is held only for the swap itself. Shutdown of the old process and the
+/// READY wait on the new one both run with the lock released, so `get_sidecar_connection`
+/// and other slot readers are never blocked for the duration of a reload.
 fn reload_blocking(slot: &Mutex<Arc<Sidecar>>) -> Result<ConnectionInfo, String> {
-    let next = {
-        let mut current = lock_slot(slot);
-        current.shutdown();
-        let next = Sidecar::start(generate_token()).map_err(|error| error.to_string())?;
-        *current = Arc::clone(&next);
-        next
-    };
+    let previous = Arc::clone(&lock_slot(slot));
+    previous.shutdown();
+    let next = Sidecar::start(generate_token()).map_err(|error| error.to_string())?;
+    *lock_slot(slot) = Arc::clone(&next);
     next.connection()
 }
 
