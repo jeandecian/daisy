@@ -16,12 +16,22 @@ from typing import Final
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, Query, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
+from daisy.backup import DEFAULT_WORKSPACE
 from daisy.db import DEFAULT_DB_PATH, get_history, init_db, save_message
+from daisy.extensions import DiscoveryResult, discover_extensions
+from daisy.preflight import CheckResult, PreflightReport
+from daisy.proposals import (
+    ApprovalRequiredError,
+    Proposal,
+    ProposalError,
+    ProposalManager,
+)
 from daisy.schema import (
     ChatRequest,
     Message,
@@ -48,6 +58,18 @@ CORS_ORIGINS: Final[list[str]] = [
 CORS_ORIGIN_REGEX: Final[str] = r"^http://127\.0\.0\.1(:\d+)?$"
 CORS_METHODS: Final[list[str]] = ["GET", "POST", "OPTIONS"]
 CORS_HEADERS: Final[list[str]] = ["Authorization", "Content-Type"]
+
+
+class ProposeRequest(BaseModel):
+    """Body of POST /proposals/propose: workspace-relative path to full proposed content."""
+
+    changes: dict[str, str]
+
+
+class DecisionRequest(BaseModel):
+    """Body of approve and reject: the named human making the decision."""
+
+    approver: str = Field(max_length=128)
 
 
 async def stream_ollama_chat(
@@ -115,17 +137,85 @@ def health_payload(now: datetime | None = None) -> dict[str, str]:
     return {"status": "ok", "timestamp": moment.isoformat()}
 
 
+def _check_json(check: CheckResult) -> dict[str, object]:
+    """Serialize one pre-flight tool run."""
+    return {
+        "name": check.name,
+        "passed": check.passed,
+        "errors": list(check.errors),
+        "warnings": list(check.warnings),
+        "stdout": check.stdout,
+        "stderr": check.stderr,
+        "returncode": check.returncode,
+    }
+
+
+def _report_json(report: PreflightReport) -> dict[str, object]:
+    """Serialize a pre-flight report with every check it ran."""
+    return {
+        "passed": report.passed,
+        "checks": [_check_json(check) for check in report.checks],
+    }
+
+
+def _proposal_json(proposal: Proposal) -> dict[str, object]:
+    """Serialize a proposal. Paths are listed; file contents are not echoed back."""
+    return {
+        "proposal_id": proposal.proposal_id,
+        "status": proposal.status.value,
+        "created_at": proposal.created_at.isoformat(),
+        "paths": sorted(proposal.changes),
+        "decided_by": proposal.decided_by,
+        "snapshot_id": proposal.snapshot_id,
+        "error": proposal.error,
+        "preflight": _report_json(proposal.report),
+    }
+
+
+def _extensions_json(result: DiscoveryResult) -> dict[str, list[dict[str, str]]]:
+    """Serialize discovered extensions, loaded and rejected, with their status."""
+    entries: list[dict[str, str]] = [
+        {
+            "status": "loaded",
+            "file": extension.path.name,
+            "name": extension.meta.name,
+            "version": extension.meta.version,
+            "description": extension.meta.description,
+        }
+        for extension in result.loaded
+    ]
+    entries.extend(
+        {"status": "failed", "file": failure.path.name, "error": failure.error}
+        for failure in result.failures
+    )
+    return {"extensions": entries}
+
+
+def _find_proposal(manager: ProposalManager, proposal_id: str) -> Proposal:
+    """Return the proposal, or raise 404 when the id is unknown."""
+    try:
+        return manager.get(proposal_id)
+    except ProposalError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 def create_app(
     auth_token: str,
     ollama_transport: httpx.AsyncBaseTransport | None = None,
     db_path: Path | None = None,
+    workspace: Path | None = None,
 ) -> FastAPI:
     """Build the FastAPI application guarded by the given bearer token.
 
     The SQLite database is initialized here, so it exists before the server starts.
+    The proposal manager and the extension discovery result are stored on ``app.state``,
+    so every request sees the same instances. ``workspace`` defaults to the project root.
     """
     resolved_db = init_db(db_path or DEFAULT_DB_PATH)
+    resolved_workspace = (workspace if workspace is not None else DEFAULT_WORKSPACE).resolve()
     app = FastAPI(title=SERVICE_NAME, docs_url=None, redoc_url=None, openapi_url=None)
+    app.state.proposals = ProposalManager(resolved_workspace)
+    app.state.extensions = discover_extensions(resolved_workspace)
 
     @app.middleware("http")
     async def require_bearer_token(
@@ -176,6 +266,53 @@ def create_app(
     ) -> list[dict[str, object]]:
         return get_history(limit=limit, db_path=resolved_db)
 
+    @app.post("/proposals/propose")
+    def propose(body: ProposeRequest, request: Request) -> dict[str, object]:
+        manager: ProposalManager = request.app.state.proposals
+        try:
+            proposal = manager.propose(body.changes)
+        except ProposalError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _proposal_json(proposal)
+
+    @app.post("/proposals/{proposal_id}/approve")
+    def approve(proposal_id: str, body: DecisionRequest, request: Request) -> dict[str, object]:
+        manager: ProposalManager = request.app.state.proposals
+        _find_proposal(manager, proposal_id)
+        try:
+            proposal = manager.approve(proposal_id, body.approver)
+        except ProposalError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _proposal_json(proposal)
+
+    @app.post("/proposals/{proposal_id}/reject")
+    def reject(proposal_id: str, body: DecisionRequest, request: Request) -> dict[str, object]:
+        manager: ProposalManager = request.app.state.proposals
+        _find_proposal(manager, proposal_id)
+        try:
+            proposal = manager.reject(proposal_id, body.approver)
+        except ProposalError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _proposal_json(proposal)
+
+    @app.post("/proposals/{proposal_id}/apply")
+    def apply(proposal_id: str, request: Request) -> dict[str, object]:
+        manager: ProposalManager = request.app.state.proposals
+        _find_proposal(manager, proposal_id)
+        try:
+            proposal = manager.apply(proposal_id)
+        except ApprovalRequiredError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ProposalError as exc:
+            # Raised after the write failed and the snapshot was restored.
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return _proposal_json(proposal)
+
+    @app.get("/extensions")
+    def list_extensions(request: Request) -> dict[str, list[dict[str, str]]]:
+        result: DiscoveryResult = request.app.state.extensions
+        return _extensions_json(result)
+
     return app
 
 
@@ -201,6 +338,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_DB_PATH,
         help="SQLite database file for chat history; parent directories are created.",
     )
+    parser.add_argument(
+        "--workspace",
+        type=Path,
+        default=DEFAULT_WORKSPACE,
+        help="Workspace root for proposals and the extensions/ folder.",
+    )
     return parser.parse_args(argv)
 
 
@@ -221,7 +364,7 @@ def bind_socket(host: str, port: int) -> socket.socket:
 def main(argv: list[str] | None = None) -> None:
     """Initialize the app and database, announce the port on stdout, and serve."""
     args = parse_args(argv)
-    app = create_app(args.auth_token, db_path=args.db_path)
+    app = create_app(args.auth_token, db_path=args.db_path, workspace=args.workspace)
     sock = bind_socket(args.host, args.port)
     actual_port = int(sock.getsockname()[1])
     print(f"READY:{actual_port}", flush=True)
