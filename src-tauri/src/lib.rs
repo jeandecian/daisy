@@ -1,5 +1,7 @@
+mod backup;
 mod sidecar;
 
+use backup::{create_backup, rollback_latest, verify_health};
 use sidecar::{generate_token, get_sidecar_connection, reload_sidecar, Sidecar, SidecarHandle};
 use tauri::{Manager, RunEvent};
 
@@ -13,7 +15,10 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_sidecar_connection,
-            reload_sidecar
+            reload_sidecar,
+            create_backup,
+            rollback_latest,
+            verify_health
         ])
         .build(tauri::generate_context!())
         .expect("error while building Daisy");
