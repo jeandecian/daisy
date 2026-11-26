@@ -28,6 +28,16 @@ interface RollbackOutcome {
 
 type SidecarStatus = "connecting" | "reloading" | "connected" | "offline" | "error";
 
+declare global {
+  interface Window {
+    /** Set by artifacts.ts once the artifacts panel has loaded. */
+    daisyArtifacts?: {
+      stageProposal(files: Record<string, { before: string; after: string }>): Promise<string | null>;
+      rejudge(proposalId: string): Promise<void>;
+    };
+  }
+}
+
 const CHAT_MODEL = "qwen2.5-coder:7b";
 const DEV_CONNECTION_KEY = "daisy.devConnection";
 
@@ -36,6 +46,12 @@ const DEV_CONNECTION_KEY = "daisy.devConnection";
  * sse-starlette defaults to CRLF, so a plain "\n\n" split never matches.
  */
 const SSE_BOUNDARY = /\r\n\r\n|\n\n|\r\r/;
+
+/**
+ * A proposal block in a chat reply: a fence opened with `daisy-proposal path=<relative path>`
+ * and closed with a line holding three backticks. The body is the full proposed file content.
+ */
+const PROPOSAL_FENCE = /```daisy-proposal[ \t]+path=(\S+)[ \t]*\r?\n([\s\S]*?)\r?\n```/g;
 
 const messages: ChatMessage[] = [];
 let connection: SidecarConnection | null = null;
@@ -170,6 +186,48 @@ function readField(data: string, key: string): string {
   }
 }
 
+/**
+ * Extracts `daisy-proposal` blocks from a finished reply. Returns a map of relative path to
+ * full proposed content. A path repeated in one reply keeps its last block.
+ */
+export function extractProposalBlocks(text: string): Record<string, string> {
+  const files: Record<string, string> = {};
+  const pattern = new RegExp(PROPOSAL_FENCE.source, "g");
+  let match = pattern.exec(text);
+  while (match) {
+    const path = match[1] ?? "";
+    const body = match[2] ?? "";
+    if (path !== "") {
+      files[path] = body;
+    }
+    match = pattern.exec(text);
+  }
+  return files;
+}
+
+/**
+ * Stages any proposal blocks in a finished reply for review in the artifacts panel. The
+ * original file content is not loaded, so the diff shows the proposed content as additions.
+ * Nothing is written here; the reviewer must approve in the artifacts panel.
+ */
+async function stageProposalsFromReply(text: string): Promise<void> {
+  const blocks = extractProposalBlocks(text);
+  const paths = Object.keys(blocks);
+  if (paths.length === 0) {
+    return;
+  }
+  const stage = window.daisyArtifacts?.stageProposal;
+  if (!stage) {
+    console.warn("Proposal blocks found but the artifacts panel is not loaded");
+    return;
+  }
+  const files: Record<string, { before: string; after: string }> = {};
+  for (const path of paths) {
+    files[path] = { before: "", after: blocks[path] ?? "" };
+  }
+  await stage(files);
+}
+
 /** Streams the assistant reply for `text` into `bubble`, updating live as tokens arrive. */
 async function streamReply(text: string, bubble: HTMLElement): Promise<void> {
   // Read the connection at send time so a reload that finished earlier is picked up.
@@ -275,6 +333,9 @@ async function submitMessage(): Promise<void> {
   setStreaming(true);
   try {
     await streamReply(text, bubble);
+    if (!bubble.classList.contains("chat-message--error")) {
+      await stageProposalsFromReply(bubble.textContent ?? "");
+    }
   } catch (error) {
     bubble.classList.add("chat-message--error");
     bubble.textContent = `Could not reach Daisy: ${error instanceof Error ? error.message : String(error)}`;

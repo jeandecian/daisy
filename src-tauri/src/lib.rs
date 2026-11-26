@@ -4,7 +4,8 @@ mod sidecar;
 
 use backup::{create_backup, rollback_latest, verify_health};
 use proposals::{
-    apply_proposal, approve_proposal, list_extensions, propose_proposal, reject_proposal,
+    apply_proposal, approve_proposal, judge_proposal, list_extensions, propose_proposal,
+    reject_proposal,
 };
 use sidecar::{generate_token, get_sidecar_connection, reload_sidecar, Sidecar, SidecarHandle};
 use tauri::{Manager, RunEvent};
@@ -24,6 +25,7 @@ pub fn run() {
             rollback_latest,
             verify_health,
             propose_proposal,
+            judge_proposal,
             approve_proposal,
             reject_proposal,
             apply_proposal,

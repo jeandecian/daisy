@@ -1,9 +1,10 @@
 /**
- * Artifacts panel: staged proposals, line diffs, pre-flight badges and HITL controls.
+ * Artifacts panel: staged proposals, line diffs, pre-flight badges, LLM judge verdicts and HITL controls.
  *
- * The sidecar is reached only through Tauri commands (propose_proposal, approve_proposal,
- * reject_proposal, apply_proposal). Nothing is written until the user clicks Approve & Apply,
- * and approval is recorded under APPROVER_NAME before the apply command runs.
+ * The sidecar is reached only through Tauri commands (propose_proposal, judge_proposal,
+ * approve_proposal, reject_proposal, apply_proposal). Nothing is written until the user clicks
+ * Approve & Apply, and approval is recorded under APPROVER_NAME before the apply command runs.
+ * The judge verdict is advisory: it is shown to the reviewer but never approves or blocks anything.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -23,6 +24,15 @@ interface PreflightPayload {
   checks: CheckPayload[];
 }
 
+/** Structured audit result from POST /proposals/{id}/judge. */
+export interface JudgeVerdict {
+  verdict: string;
+  confidence: number;
+  risks: string[];
+  summary: string;
+  provider?: string;
+}
+
 interface ProposalPayload {
   proposal_id: string;
   status: string;
@@ -32,6 +42,8 @@ interface ProposalPayload {
   snapshot_id: string | null;
   error: string | null;
   preflight: PreflightPayload;
+  /** Null or absent until the judge has run on this proposal. */
+  judge_verdict?: JudgeVerdict | null;
 }
 
 /** Before and after text for one file. `before` is "" for a file that does not exist yet. */
@@ -70,9 +82,15 @@ const STATUS_LABELS: Record<string, string> = {
   applied: "Applied",
   failed: "Failed",
 };
+const VERDICT_LABELS: Record<string, string> = {
+  APPROVED: "Approved",
+  WARNING: "Warning",
+  REJECTED: "Rejected",
+};
 const DIFF_SIGN: Record<DiffOp["kind"], string> = { add: "+", del: "-", ctx: " " };
 const MAX_NOTICES = 5;
 const MAX_ERROR_LINES = 8;
+const MAX_RISK_LINES = 12;
 /** Caps the LCS table (rows x columns) so a very large file cannot freeze the panel. */
 const MAX_DIFF_CELLS = 1_000_000;
 
@@ -191,6 +209,11 @@ function firstLines(text: string): string[] {
     .filter((line) => line.trim() !== "");
 }
 
+function confidencePercent(confidence: number): number {
+  const clamped = Math.min(Math.max(confidence, 0), 1);
+  return Math.round(clamped * 100);
+}
+
 function renderNotice(notice: Notice): HTMLElement {
   return el("div", `artifact-notice artifact-notice--${notice.kind}`, notice.text);
 }
@@ -261,6 +284,77 @@ function renderPreflight(preflight: PreflightPayload): HTMLElement {
   return section;
 }
 
+/** Judge card: verdict badge, confidence, summary, risks, and a Re-Judge control. */
+function renderJudge(id: string, view: ProposalView): HTMLElement {
+  const { payload, busy } = view;
+  const verdict = payload.judge_verdict ?? null;
+  const card = el("section", "judge-card");
+  card.setAttribute("aria-label", "LLM judge verdict");
+
+  const header = el("div", "judge-header");
+  header.appendChild(el("h4", "artifact-subtitle", "LLM judge"));
+  if (verdict) {
+    const badge = el(
+      "span",
+      "judge-badge",
+      VERDICT_LABELS[verdict.verdict] ?? verdict.verdict,
+    );
+    badge.dataset.verdict = verdict.verdict.toLowerCase();
+    header.appendChild(badge);
+  }
+  card.appendChild(header);
+
+  if (!verdict) {
+    card.appendChild(el("p", "artifact-meta", "Not audited yet. Run Re-Judge to get a verdict."));
+  } else {
+    const meta = el(
+      "p",
+      "artifact-meta",
+      `${confidencePercent(verdict.confidence)}% confidence${verdict.provider ? ` · ${verdict.provider}` : ""}`,
+    );
+    card.appendChild(meta);
+
+    if (verdict.verdict === "REJECTED") {
+      const warning = el(
+        "p",
+        "judge-warning",
+        "The LLM judge rejected this change. Read the risks below before you approve.",
+      );
+      warning.setAttribute("role", "alert");
+      card.appendChild(warning);
+    }
+
+    if (verdict.summary) {
+      card.appendChild(el("p", "judge-summary", verdict.summary));
+    }
+
+    if (verdict.risks.length > 0) {
+      const section = el("div", "judge-risks");
+      section.appendChild(el("p", "artifact-meta", "Risks"));
+      const list = el("ul");
+      for (const risk of verdict.risks.slice(0, MAX_RISK_LINES)) {
+        list.appendChild(el("li", undefined, risk));
+      }
+      if (verdict.risks.length > MAX_RISK_LINES) {
+        list.appendChild(el("li", "artifact-meta", `and ${verdict.risks.length - MAX_RISK_LINES} more`));
+      }
+      section.appendChild(list);
+      card.appendChild(section);
+    }
+  }
+
+  const actions = el("div", "judge-actions");
+  const rejudge = el("button", "artifact-button", "Re-Judge");
+  rejudge.type = "button";
+  rejudge.disabled = busy || (payload.status !== "pending" && payload.status !== "approved");
+  rejudge.addEventListener("click", () => {
+    void rejudgeProposal(id);
+  });
+  actions.appendChild(rejudge);
+  card.appendChild(actions);
+  return card;
+}
+
 function renderDiff(path: string, change: FileChange): HTMLElement {
   const section = el("section", "artifact-diff-block");
   const ops = diffLines(change.before, change.after);
@@ -324,6 +418,11 @@ function renderActions(id: string, view: ProposalView): HTMLElement {
   if (payload.status === "pending" && !payload.preflight.passed) {
     row.appendChild(el("p", "artifact-meta", "Fix the pre-flight errors before approving."));
   }
+  if (payload.status === "pending" && payload.judge_verdict?.verdict === "REJECTED") {
+    row.appendChild(
+      el("p", "judge-warning", "Approving asks for confirmation because the LLM judge rejected this change."),
+    );
+  }
   return row;
 }
 
@@ -342,6 +441,7 @@ function renderProposal(id: string, view: ProposalView): HTMLElement {
   const body = el("div", "artifact-card-section");
   body.appendChild(renderPaths(payload.paths));
   body.appendChild(renderPreflight(payload.preflight));
+  body.appendChild(renderJudge(id, view));
   for (const path of payload.paths) {
     const change = files[path];
     if (change) {
@@ -385,12 +485,21 @@ function setBusy(view: ProposalView, busy: boolean): void {
 
 /**
  * Records APPROVER_NAME's approval, then applies the proposal. If approval already happened
- * (status approved), only the apply runs, so a failed apply can be retried.
+ * (status approved), only the apply runs, so a failed apply can be retried. When the judge
+ * rejected the change, the reviewer must confirm before approval is recorded.
  */
 async function approveAndApply(id: string): Promise<void> {
   const view = views.get(id);
   if (!view || view.busy) {
     return;
+  }
+  if (view.payload.status === "pending" && view.payload.judge_verdict?.verdict === "REJECTED") {
+    const confirmed = window.confirm(
+      "The LLM judge rejected this change. Approve and apply it anyway?",
+    );
+    if (!confirmed) {
+      return;
+    }
   }
   setBusy(view, true);
   try {
@@ -431,6 +540,31 @@ async function rejectProposal(id: string): Promise<void> {
   }
 }
 
+/** Re-runs the LLM judge. The verdict is advisory; nothing is written and approval is unchanged. */
+async function rejudgeProposal(id: string): Promise<void> {
+  const view = views.get(id);
+  if (!view || view.busy) {
+    return;
+  }
+  setBusy(view, true);
+  try {
+    view.payload = await invoke<ProposalPayload>("judge_proposal", { proposalId: id });
+    const verdict = view.payload.judge_verdict;
+    if (verdict) {
+      pushNotice(
+        "info",
+        `Judge verdict for ${view.payload.paths.join(", ")}: ${verdict.verdict} (${confidencePercent(verdict.confidence)}% confidence).`,
+      );
+    } else {
+      pushNotice("error", "The judge returned no verdict.");
+    }
+  } catch (error) {
+    pushNotice("error", `Could not run the judge: ${errorText(error)}`);
+  } finally {
+    setBusy(view, false);
+  }
+}
+
 /**
  * Stages a change set for review. `before` is used only for the diff; the backend receives
  * `after` and runs pre-flight checks on it. Nothing is written by this call.
@@ -454,6 +588,6 @@ export async function stageProposal(files: Record<string, FileChange>): Promise<
   }
 }
 
-Object.assign(window, { daisyArtifacts: { stageProposal } });
+Object.assign(window, { daisyArtifacts: { stageProposal, rejudge: rejudgeProposal } });
 
 render();
