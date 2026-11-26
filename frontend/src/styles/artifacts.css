@@ -1,0 +1,253 @@
+/*
+ * Artifacts panel: proposals, diffs, pre-flight badges and HITL controls.
+ * Uses the decss tokens from decss.css. Quiet surfaces, 8px squircle radius, hairline borders.
+ */
+
+.artifact-notices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.artifact-notices:empty {
+  display: none;
+}
+
+.artifact-notice {
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-accent);
+  border-radius: var(--radius-squircle);
+  background: var(--color-surface);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.artifact-notice--error {
+  border-left-color: var(--color-text);
+}
+
+.artifact-cards {
+  display: flex;
+  flex-direction: column;
+}
+
+.artifact-card-title {
+  font-weight: 600;
+}
+
+.artifact-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+
+.artifact-status {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.artifact-card-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-sm);
+}
+
+.artifact-subtitle {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.artifact-meta {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  overflow-wrap: anywhere;
+}
+
+.artifact-error {
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--color-border);
+  border-left: 3px solid var(--color-text);
+  border-radius: var(--radius-squircle);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.artifact-paths {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.8125rem;
+}
+
+.artifact-paths code {
+  overflow-wrap: anywhere;
+}
+
+/* Pre-flight */
+.preflight {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.preflight-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+
+.preflight-summary {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+}
+
+.preflight-summary[data-state="passed"] {
+  color: var(--color-accent);
+}
+
+.preflight-summary[data-state="failed"] {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.preflight-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+}
+
+.preflight-badge {
+  padding: 0.2rem 0.6rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-squircle);
+  font-size: 0.75rem;
+  color: var(--color-muted);
+}
+
+.preflight-badge[data-state="passed"] {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.preflight-badge[data-state="failed"] {
+  border-color: var(--color-text);
+  border-style: dashed;
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.preflight-errors ul {
+  margin: 0;
+  padding-left: var(--space-sm);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+/* Diff */
+.artifact-diff-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.artifact-diff-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+
+.artifact-diff-counts {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.artifact-diff {
+  max-height: 24rem;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-squircle);
+  padding: var(--space-xs) 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+}
+
+.artifact-diff .artifact-meta {
+  padding: 0 var(--space-sm);
+}
+
+.diff-line {
+  padding: 0 var(--space-sm);
+  white-space: pre;
+  min-width: max-content;
+}
+
+.diff-line[data-kind="add"] {
+  color: var(--color-accent);
+  background: var(--color-surface);
+}
+
+.diff-line[data-kind="del"] {
+  color: var(--color-muted);
+  text-decoration: line-through;
+}
+
+.diff-line[data-kind="ctx"] {
+  color: var(--color-text);
+}
+
+/* HITL controls */
+.artifact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.artifact-actions .artifact-meta {
+  flex-basis: 100%;
+}
+
+.artifact-button {
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-squircle);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.artifact-button--primary {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #ffffff;
+}
+
+.artifact-button:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+.artifact-button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.artifact-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
