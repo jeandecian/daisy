@@ -15,6 +15,17 @@ interface SidecarConnection {
   token: string;
 }
 
+interface HealthReport {
+  ok: boolean;
+  detail: string;
+}
+
+interface RollbackOutcome {
+  snapshotId: string;
+  port: number;
+  token: string;
+}
+
 type SidecarStatus = "connecting" | "reloading" | "connected" | "offline" | "error";
 
 const CHAT_MODEL = "qwen2.5-coder:7b";
@@ -30,6 +41,7 @@ const messages: ChatMessage[] = [];
 let connection: SidecarConnection | null = null;
 let streaming = false;
 let reloading = false;
+let recovering = false;
 
 function requireEl<T extends HTMLElement>(selector: string): T {
   const el = document.querySelector<T>(selector);
@@ -48,6 +60,9 @@ const sendButton = requireEl<HTMLButtonElement>("#chat-send");
 const toggle = requireEl<HTMLButtonElement>("#artifact-toggle");
 const statusEl = requireEl<HTMLElement>("#sidecar-status");
 const reloadButton = requireEl<HTMLButtonElement>("#sidecar-reload");
+const rollbackBanner = requireEl<HTMLElement>("#rollback-banner");
+const rollbackText = requireEl<HTMLElement>("#rollback-banner-text");
+const rollbackDismiss = requireEl<HTMLButtonElement>("#rollback-banner-dismiss");
 
 function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
@@ -88,11 +103,24 @@ function setStatus(state: SidecarStatus, detail?: string): void {
   statusEl.title = detail ?? "";
 }
 
-/** Disables the reload control while a reload is in flight or a reply is streaming. */
+/** Shows the rollback notice. `kind` picks the styling: a recovered rollback or a failed one. */
+function showRollbackNotice(message: string, kind: "recovered" | "failed"): void {
+  rollbackText.textContent = message;
+  rollbackBanner.dataset.kind = kind;
+  rollbackBanner.hidden = false;
+}
+
+function hideRollbackNotice(): void {
+  rollbackBanner.hidden = true;
+  rollbackText.textContent = "";
+}
+
+/** Disables controls while a reload, a recovery, or a reply is in flight. */
 function refreshControls(): void {
-  reloadButton.disabled = reloading || streaming;
-  sendButton.disabled = reloading || streaming;
-  input.disabled = reloading || streaming;
+  const busy = reloading || recovering || streaming;
+  reloadButton.disabled = busy;
+  sendButton.disabled = busy;
+  input.disabled = busy;
 }
 
 function createBubble(msg: ChatMessage): HTMLElement {
@@ -230,7 +258,7 @@ async function streamReply(text: string, bubble: HTMLElement): Promise<void> {
 
 async function submitMessage(): Promise<void> {
   const text = input.value.trim();
-  if (text === "" || streaming || reloading) {
+  if (text === "" || streaming || reloading || recovering) {
     return;
   }
   const userMessage: ChatMessage = { role: "user", text };
@@ -262,7 +290,7 @@ async function submitMessage(): Promise<void> {
  * Chat is locked while the reload runs, so no request uses the old connection mid-swap.
  */
 async function reloadSidecar(): Promise<void> {
-  if (!isTauriRuntime() || reloading || streaming) {
+  if (!isTauriRuntime() || reloading || recovering || streaming) {
     return;
   }
   reloading = true;
@@ -278,6 +306,44 @@ async function reloadSidecar(): Promise<void> {
     setStatus("error", message);
   } finally {
     reloading = false;
+    refreshControls();
+  }
+}
+
+/**
+ * Checks the live sidecar's /health within the 3.0 second limit. If it fails, restores
+ * the newest snapshot and restarts the sidecar, then shows a banner saying what happened.
+ */
+async function verifyAndRecover(): Promise<void> {
+  if (!isTauriRuntime() || reloading || recovering || streaming) {
+    return;
+  }
+  recovering = true;
+  refreshControls();
+  try {
+    const health = await invoke<HealthReport>("verify_health");
+    if (health.ok) {
+      return;
+    }
+    console.warn("Health check failed; rolling back", health.detail);
+    setStatus("reloading");
+    try {
+      const outcome = await invoke<RollbackOutcome>("rollback_latest");
+      connection = { port: outcome.port, token: outcome.token };
+      setStatus("connected");
+      showRollbackNotice(
+        `Daisy recovered from a failed health check and rolled back to snapshot ${outcome.snapshotId}.`,
+        "recovered",
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setStatus("error", message);
+      showRollbackNotice(`Health check failed and rollback did not succeed: ${message}`, "failed");
+    }
+  } catch (error) {
+    console.error("Health verification could not run", error);
+  } finally {
+    recovering = false;
     refreshControls();
   }
 }
@@ -306,6 +372,10 @@ reloadButton.addEventListener("click", () => {
   void reloadSidecar();
 });
 
+rollbackDismiss.addEventListener("click", () => {
+  hideRollbackNotice();
+});
+
 toggle.addEventListener("click", () => {
   const collapsed = app.dataset.collapsed !== "true";
   app.dataset.collapsed = collapsed ? "true" : "false";
@@ -327,6 +397,7 @@ async function init(): Promise<void> {
     setStatus("offline");
   } else {
     setStatus("connected");
+    await verifyAndRecover();
   }
   refreshControls();
   app.dataset.ready = "true";
