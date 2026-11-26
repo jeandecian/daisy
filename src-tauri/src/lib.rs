@@ -1,7 +1,11 @@
 mod backup;
+mod proposals;
 mod sidecar;
 
 use backup::{create_backup, rollback_latest, verify_health};
+use proposals::{
+    apply_proposal, approve_proposal, list_extensions, propose_proposal, reject_proposal,
+};
 use sidecar::{generate_token, get_sidecar_connection, reload_sidecar, Sidecar, SidecarHandle};
 use tauri::{Manager, RunEvent};
 
@@ -18,7 +22,12 @@ pub fn run() {
             reload_sidecar,
             create_backup,
             rollback_latest,
-            verify_health
+            verify_health,
+            propose_proposal,
+            approve_proposal,
+            reject_proposal,
+            apply_proposal,
+            list_extensions
         ])
         .build(tauri::generate_context!())
         .expect("error while building Daisy");
