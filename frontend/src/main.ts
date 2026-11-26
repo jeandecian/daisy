@@ -15,6 +15,8 @@ interface SidecarConnection {
   token: string;
 }
 
+type SidecarStatus = "connecting" | "reloading" | "connected" | "offline" | "error";
+
 const CHAT_MODEL = "qwen2.5-coder:7b";
 const DEV_CONNECTION_KEY = "daisy.devConnection";
 
@@ -27,6 +29,7 @@ const SSE_BOUNDARY = /\r\n\r\n|\n\n|\r\r/;
 const messages: ChatMessage[] = [];
 let connection: SidecarConnection | null = null;
 let streaming = false;
+let reloading = false;
 
 function requireEl<T extends HTMLElement>(selector: string): T {
   const el = document.querySelector<T>(selector);
@@ -43,6 +46,8 @@ const form = requireEl<HTMLFormElement>("#chat-form");
 const input = requireEl<HTMLTextAreaElement>("#chat-input");
 const sendButton = requireEl<HTMLButtonElement>("#chat-send");
 const toggle = requireEl<HTMLButtonElement>("#artifact-toggle");
+const statusEl = requireEl<HTMLElement>("#sidecar-status");
+const reloadButton = requireEl<HTMLButtonElement>("#sidecar-reload");
 
 function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window;
@@ -68,6 +73,28 @@ async function loadConnection(): Promise<SidecarConnection | null> {
   return null;
 }
 
+/** Updates the header status text and its data-state, which drives the status styling. */
+function setStatus(state: SidecarStatus, detail?: string): void {
+  const labels: Record<SidecarStatus, string> = {
+    connecting: "Connecting",
+    reloading: "Reloading…",
+    connected: "Connected",
+    offline: "Offline",
+    error: "Error",
+  };
+  const suffix = state === "connected" && connection ? ` · port ${connection.port}` : "";
+  statusEl.dataset.state = state === "connected" ? "connected" : state === "error" ? "error" : "idle";
+  statusEl.textContent = `${labels[state]}${suffix}`;
+  statusEl.title = detail ?? "";
+}
+
+/** Disables the reload control while a reload is in flight or a reply is streaming. */
+function refreshControls(): void {
+  reloadButton.disabled = reloading || streaming;
+  sendButton.disabled = reloading || streaming;
+  input.disabled = reloading || streaming;
+}
+
 function createBubble(msg: ChatMessage): HTMLElement {
   placeholder.hidden = true;
   const item = document.createElement("div");
@@ -84,8 +111,7 @@ function scrollToBottom(): void {
 
 function setStreaming(active: boolean): void {
   streaming = active;
-  sendButton.disabled = active;
-  input.disabled = active;
+  refreshControls();
 }
 
 /** Parses one complete SSE block into its event name and data payload. Accepts CRLF, LF, or CR line endings. */
@@ -118,16 +144,18 @@ function readField(data: string, key: string): string {
 
 /** Streams the assistant reply for `text` into `bubble`, updating live as tokens arrive. */
 async function streamReply(text: string, bubble: HTMLElement): Promise<void> {
-  if (!connection) {
+  // Read the connection at send time so a reload that finished earlier is picked up.
+  const active = connection;
+  if (!active) {
     bubble.textContent = "Backend is not connected.";
     bubble.classList.add("chat-message--error");
     return;
   }
-  const response = await fetch(`http://127.0.0.1:${connection.port}/chat/stream`, {
+  const response = await fetch(`http://127.0.0.1:${active.port}/chat/stream`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${connection.token}`,
+      Authorization: `Bearer ${active.token}`,
     },
     body: JSON.stringify({ message: text, model: CHAT_MODEL }),
   });
@@ -202,7 +230,7 @@ async function streamReply(text: string, bubble: HTMLElement): Promise<void> {
 
 async function submitMessage(): Promise<void> {
   const text = input.value.trim();
-  if (text === "" || streaming) {
+  if (text === "" || streaming || reloading) {
     return;
   }
   const userMessage: ChatMessage = { role: "user", text };
@@ -229,6 +257,31 @@ async function submitMessage(): Promise<void> {
   }
 }
 
+/**
+ * Restarts the Python sidecar through Tauri IPC and swaps in the new port and token.
+ * Chat is locked while the reload runs, so no request uses the old connection mid-swap.
+ */
+async function reloadSidecar(): Promise<void> {
+  if (!isTauriRuntime() || reloading || streaming) {
+    return;
+  }
+  reloading = true;
+  refreshControls();
+  setStatus("reloading");
+  try {
+    const next = await invoke<SidecarConnection>("reload_sidecar");
+    connection = { port: next.port, token: next.token };
+    setStatus("connected");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("Sidecar reload failed", error);
+    setStatus("error", message);
+  } finally {
+    reloading = false;
+    refreshControls();
+  }
+}
+
 function autosize(): void {
   input.style.height = "auto";
   input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
@@ -249,6 +302,10 @@ input.addEventListener("keydown", (event: KeyboardEvent) => {
 
 input.addEventListener("input", autosize);
 
+reloadButton.addEventListener("click", () => {
+  void reloadSidecar();
+});
+
 toggle.addEventListener("click", () => {
   const collapsed = app.dataset.collapsed !== "true";
   app.dataset.collapsed = collapsed ? "true" : "false";
@@ -257,6 +314,7 @@ toggle.addEventListener("click", () => {
 });
 
 async function init(): Promise<void> {
+  setStatus("connecting");
   try {
     connection = await loadConnection();
   } catch (error) {
@@ -266,7 +324,11 @@ async function init(): Promise<void> {
   if (!connection) {
     placeholder.textContent =
       "Backend not connected. In browser dev mode, set localStorage key daisy.devConnection to {\"port\":<port>,\"token\":\"<token>\"}.";
+    setStatus("offline");
+  } else {
+    setStatus("connected");
   }
+  refreshControls();
   app.dataset.ready = "true";
 }
 
