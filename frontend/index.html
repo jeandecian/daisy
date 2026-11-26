@@ -7,9 +7,43 @@
     <link rel="stylesheet" href="/src/styles/decss.css" />
   </head>
   <body>
-    <main id="app" class="shell">
-      <h1 class="title">Daisy</h1>
-      <p class="subtitle">Local-first personal assistant.</p>
+    <main id="app" class="app-container" data-collapsed="false">
+      <section class="pane pane-chat" aria-label="Chat">
+        <header class="chat-header">
+          <h1 class="title">Daisy</h1>
+        </header>
+        <div class="chat-messages" id="chat-messages" role="log" aria-live="polite">
+          <p class="chat-placeholder" id="chat-placeholder">Local-first personal assistant. Start a conversation.</p>
+        </div>
+        <form class="chat-input-container" id="chat-form">
+          <textarea
+            id="chat-input"
+            class="chat-input"
+            rows="1"
+            placeholder="Message Daisy"
+            aria-label="Message Daisy"
+          ></textarea>
+          <button type="submit" class="chat-send" id="chat-send">Send</button>
+        </form>
+      </section>
+
+      <div class="pane-divider" aria-hidden="true"></div>
+
+      <section class="pane pane-artifacts" id="artifacts-pane" aria-label="Artifacts">
+        <header class="artifact-header">
+          <span class="artifact-title">Artifacts</span>
+          <button
+            type="button"
+            class="artifact-toggle"
+            id="artifact-toggle"
+            aria-expanded="true"
+            aria-controls="artifact-content"
+          >Collapse</button>
+        </header>
+        <div class="artifact-content" id="artifact-content">
+          <p class="artifact-empty">No artifacts yet. Diffs and file previews will appear here.</p>
+        </div>
+      </section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>
