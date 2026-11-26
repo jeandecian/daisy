@@ -11,6 +11,10 @@
       <section class="pane pane-chat" aria-label="Chat">
         <header class="chat-header">
           <h1 class="title">Daisy</h1>
+          <div class="sidecar-bar">
+            <span class="sidecar-status" id="sidecar-status" role="status" aria-live="polite">Connecting</span>
+            <button type="button" class="sidecar-reload" id="sidecar-reload">Reload Sidecar</button>
+          </div>
         </header>
         <div class="chat-messages" id="chat-messages" role="log" aria-live="polite">
           <p class="chat-placeholder" id="chat-placeholder">Local-first personal assistant. Start a conversation.</p>
