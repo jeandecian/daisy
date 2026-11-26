@@ -60,6 +60,23 @@ CORS_ORIGIN_REGEX: Final[str] = r"^http://127\.0\.0\.1(:\d+)?$"
 CORS_METHODS: Final[list[str]] = ["GET", "POST", "OPTIONS"]
 CORS_HEADERS: Final[list[str]] = ["Authorization", "Content-Type"]
 
+# Instructs the model to emit file changes as daisy-proposal fences, which the frontend
+# stages in the artifacts panel for human approval. Nothing is written by the model itself.
+SYSTEM_PROMPT: Final[str] = """You are Daisy, a local coding assistant.
+
+When your reply creates or modifies a file, including an extension under extensions/, put the complete proposed file content in a fenced block opened exactly like this:
+
+```daisy-proposal path=<workspace-relative path>
+<complete file content>
+```
+
+Rules:
+- Use a workspace-relative path such as extensions/my_tool.py. Never use an absolute path or a ".." segment.
+- Give the full file content, not a diff or a fragment.
+- Before the block, briefly explain what the proposal does and why.
+- Never say the file has been written or applied. The user reviews and approves every proposal in the artifacts panel.
+- Use this fence only for real file changes. For illustrative snippets, use an ordinary code fence."""
+
 
 class ProposeRequest(BaseModel):
     """Body of POST /proposals/propose: workspace-relative path to full proposed content."""
@@ -80,12 +97,16 @@ async def stream_ollama_chat(
 ) -> AsyncIterator[dict[str, str]]:
     """Relay Ollama's streamed chat JSON lines as strict SSE events.
 
-    On successful completion the accumulated assistant text is persisted.
+    The system prompt is sent ahead of the user message so the model knows the proposal
+    fence format. On successful completion the accumulated assistant text is persisted.
     """
     yield status_event("connecting")
     payload = {
         "model": request.model,
-        "messages": [{"role": "user", "content": request.message}],
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": request.message},
+        ],
         "stream": True,
     }
     parts: list[str] = []

@@ -48,10 +48,22 @@ const DEV_CONNECTION_KEY = "daisy.devConnection";
 const SSE_BOUNDARY = /\r\n\r\n|\n\n|\r\r/;
 
 /**
- * A proposal block in a chat reply: a fence opened with `daisy-proposal path=<relative path>`
- * and closed with a line holding three backticks. The body is the full proposed file content.
+ * Primary proposal fence: ```daisy-proposal path=<relative path>, then the body, then a closing
+ * fence line. The path may be bare or wrapped in single or double quotes.
  */
-const PROPOSAL_FENCE = /```daisy-proposal[ \t]+path=(\S+)[ \t]*\r?\n([\s\S]*?)\r?\n```/g;
+const PROPOSAL_FENCE = /```daisy-proposal[ \t]+path=("[^"\n]+"|'[^'\n]+'|[^\s`]+)[ \t]*\r?\n([\s\S]*?)\r?\n```/g;
+
+/** Fallback fence: a python block. Its target is found from a leading comment or nearby prose. */
+const PYTHON_FENCE = /```(?:python|py)[ \t]*\r?\n([\s\S]*?)\r?\n```/g;
+
+/** Leading comment that names the target file, e.g. `# file: extensions/x.py`. */
+const PATH_COMMENT = /^\s*#\s*(?:file|path|filepath)\s*:\s*(\S+)/i;
+
+/** A workspace path under extensions/ ending in .py, found in prose or in the first lines of code. */
+const EXTENSION_PATH = /(?:^|[\s`'"(])(extensions\/[\w\-./]+\.py)\b/g;
+
+/** How much text before a python block is searched for a target path. */
+const PRECEDING_WINDOW_CHARS = 240;
 
 const messages: ChatMessage[] = [];
 let connection: SidecarConnection | null = null;
@@ -187,33 +199,116 @@ function readField(data: string, key: string): string {
 }
 
 /**
- * Extracts `daisy-proposal` blocks from a finished reply. Returns a map of relative path to
- * full proposed content. A path repeated in one reply keeps its last block.
+ * Accepts only workspace-relative paths. Absolute paths, backslashes and ".." segments are
+ * rejected here as a first line of defence; the backend validates the paths again.
+ */
+function cleanPath(raw: string): string | null {
+  let path = raw.trim();
+  if (path.length >= 2 && (path[0] === '"' || path[0] === "'") && path[path.length - 1] === path[0]) {
+    path = path.slice(1, -1).trim();
+  }
+  if (path === "" || path.startsWith("/") || path.indexOf("\\") !== -1) {
+    return null;
+  }
+  const segments = path.split("/");
+  for (const segment of segments) {
+    if (segment === ".." || segment === "") {
+      return null;
+    }
+  }
+  return path;
+}
+
+/** Returns the last extensions/*.py path mentioned in `text`, or null. */
+function lastExtensionPath(text: string): string | null {
+  const pattern = new RegExp(EXTENSION_PATH.source, "g");
+  let found: string | null = null;
+  let match = pattern.exec(text);
+  while (match) {
+    found = match[1] ?? null;
+    match = pattern.exec(text);
+  }
+  return found === null ? null : cleanPath(found);
+}
+
+/**
+ * Works out the target path for a python block. Order: a leading path comment in the block,
+ * then an extensions/*.py path in the first lines of the block, then one in the prose just
+ * before the block.
+ */
+function pythonBlockTarget(body: string, preceding: string): string | null {
+  const lines = body.split(/\r?\n/);
+  const firstLine = lines[0] ?? "";
+  const comment = PATH_COMMENT.exec(firstLine);
+  if (comment && comment[1]) {
+    const fromComment = cleanPath(comment[1]);
+    if (fromComment) {
+      return fromComment;
+    }
+  }
+  const head = lines.slice(0, 3).join("\n");
+  const fromHead = lastExtensionPath(head);
+  if (fromHead) {
+    return fromHead;
+  }
+  return lastExtensionPath(preceding.slice(-PRECEDING_WINDOW_CHARS));
+}
+
+/**
+ * Extracts file proposals from a finished reply. Returns a map of relative path to full proposed
+ * content. The primary `daisy-proposal` fence is read first. Python fences are a fallback, and
+ * only count when a target path can be identified. A path repeated in one reply keeps its last block.
  */
 export function extractProposalBlocks(text: string): Record<string, string> {
   const files: Record<string, string> = {};
-  const pattern = new RegExp(PROPOSAL_FENCE.source, "g");
-  let match = pattern.exec(text);
+
+  const primary = new RegExp(PROPOSAL_FENCE.source, "g");
+  let match = primary.exec(text);
   while (match) {
-    const path = match[1] ?? "";
+    const path = cleanPath(match[1] ?? "");
     const body = match[2] ?? "";
-    if (path !== "") {
+    if (path) {
       files[path] = body;
     }
-    match = pattern.exec(text);
+    match = primary.exec(text);
   }
+
+  const python = new RegExp(PYTHON_FENCE.source, "g");
+  match = python.exec(text);
+  while (match) {
+    const body = match[1] ?? "";
+    const preceding = text.slice(0, match.index);
+    const path = pythonBlockTarget(body, preceding);
+    if (path && files[path] === undefined) {
+      files[path] = body;
+    }
+    match = python.exec(text);
+  }
+
   return files;
 }
 
 /**
- * Stages any proposal blocks in a finished reply for review in the artifacts panel. The
- * original file content is not loaded, so the diff shows the proposed content as additions.
- * Nothing is written here; the reviewer must approve in the artifacts panel.
+ * Stages the proposals in a finished reply for review in the artifacts panel. Each distinct
+ * path and content pair is staged once per turn, so a block repeated in the reply is not staged
+ * twice. The original file content is not loaded, so the diff shows the proposed content as
+ * additions. Nothing is written here; the reviewer must approve in the artifacts panel.
  */
-async function stageProposalsFromReply(text: string): Promise<void> {
+async function stageProposalsFromReply(text: string, stagedKeys: Set<string>): Promise<void> {
   const blocks = extractProposalBlocks(text);
-  const paths = Object.keys(blocks);
-  if (paths.length === 0) {
+  const fresh: Record<string, { before: string; after: string }> = {};
+  let count = 0;
+  for (const path of Object.keys(blocks)) {
+    const after = blocks[path] ?? "";
+    const key = `${path}\u0000${after}`;
+    if (stagedKeys.has(key)) {
+      continue;
+    }
+    stagedKeys.add(key);
+    fresh[path] = { before: "", after };
+    count++;
+  }
+  if (count === 0) {
     return;
   }
   const stage = window.daisyArtifacts?.stageProposal;
@@ -221,11 +316,7 @@ async function stageProposalsFromReply(text: string): Promise<void> {
     console.warn("Proposal blocks found but the artifacts panel is not loaded");
     return;
   }
-  const files: Record<string, { before: string; after: string }> = {};
-  for (const path of paths) {
-    files[path] = { before: "", after: blocks[path] ?? "" };
-  }
-  await stage(files);
+  await stage(fresh);
 }
 
 /** Streams the assistant reply for `text` into `bubble`, updating live as tokens arrive. */
@@ -330,11 +421,15 @@ async function submitMessage(): Promise<void> {
   const bubble = createBubble(reply);
   bubble.classList.add("chat-message--pending");
 
+  // Keys of proposals already staged for this turn. Scoped to one turn, so a fresh message can
+  // propose the same content again.
+  const stagedKeys = new Set<string>();
+
   setStreaming(true);
   try {
     await streamReply(text, bubble);
     if (!bubble.classList.contains("chat-message--error")) {
-      await stageProposalsFromReply(bubble.textContent ?? "");
+      await stageProposalsFromReply(bubble.textContent ?? "", stagedKeys);
     }
   } catch (error) {
     bubble.classList.add("chat-message--error");
