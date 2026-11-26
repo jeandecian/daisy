@@ -25,6 +25,7 @@ from sse_starlette.sse import EventSourceResponse
 from daisy.backup import DEFAULT_WORKSPACE
 from daisy.db import DEFAULT_DB_PATH, get_history, init_db, save_message
 from daisy.extensions import DiscoveryResult, discover_extensions
+from daisy.judge import JudgeProvider, select_judge_provider
 from daisy.preflight import CheckResult, PreflightReport
 from daisy.proposals import (
     ApprovalRequiredError,
@@ -168,6 +169,9 @@ def _proposal_json(proposal: Proposal) -> dict[str, object]:
         "decided_by": proposal.decided_by,
         "snapshot_id": proposal.snapshot_id,
         "error": proposal.error,
+        "judge_verdict": (
+            None if proposal.judge_verdict is None else proposal.judge_verdict.to_json()
+        ),
         "preflight": _report_json(proposal.report),
     }
 
@@ -204,17 +208,20 @@ def create_app(
     ollama_transport: httpx.AsyncBaseTransport | None = None,
     db_path: Path | None = None,
     workspace: Path | None = None,
+    judge: JudgeProvider | None = None,
 ) -> FastAPI:
     """Build the FastAPI application guarded by the given bearer token.
 
     The SQLite database is initialized here, so it exists before the server starts.
     The proposal manager and the extension discovery result are stored on ``app.state``,
     so every request sees the same instances. ``workspace`` defaults to the project root.
+    ``judge`` defaults to the provider named by DAISY_JUDGE_PROVIDER (heuristic if unset).
     """
     resolved_db = init_db(db_path or DEFAULT_DB_PATH)
     resolved_workspace = (workspace if workspace is not None else DEFAULT_WORKSPACE).resolve()
+    resolved_judge = judge if judge is not None else select_judge_provider()
     app = FastAPI(title=SERVICE_NAME, docs_url=None, redoc_url=None, openapi_url=None)
-    app.state.proposals = ProposalManager(resolved_workspace)
+    app.state.proposals = ProposalManager(resolved_workspace, judge=resolved_judge)
     app.state.extensions = discover_extensions(resolved_workspace)
 
     @app.middleware("http")
@@ -306,6 +313,17 @@ def create_app(
         except ProposalError as exc:
             # Raised after the write failed and the snapshot was restored.
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return _proposal_json(proposal)
+
+    @app.post("/proposals/{proposal_id}/judge")
+    def judge_proposal(proposal_id: str, request: Request) -> dict[str, object]:
+        """Run the LLM judge on a proposal. The verdict is advisory and nothing is written."""
+        manager: ProposalManager = request.app.state.proposals
+        _find_proposal(manager, proposal_id)
+        try:
+            proposal = manager.audit(proposal_id)
+        except ProposalError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return _proposal_json(proposal)
 
     @app.get("/extensions")
