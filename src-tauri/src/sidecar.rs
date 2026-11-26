@@ -16,7 +16,7 @@ use tauri::State;
 use uuid::Uuid;
 
 /// Dev/macOS location of the Python backend, resolved at compile time.
-const BACKEND_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../backend");
+pub const BACKEND_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../backend");
 const READY_PREFIX: &str = "READY:";
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long a terminated process group gets to exit on SIGTERM before SIGKILL.
@@ -72,7 +72,7 @@ fn candidate_dirs() -> Vec<PathBuf> {
 }
 
 /// Finds an executable `uv`, returning its absolute path or a clear error listing what was searched.
-fn resolve_uv() -> std::io::Result<PathBuf> {
+pub fn resolve_uv() -> std::io::Result<PathBuf> {
     let dirs = candidate_dirs();
     dirs.iter()
         .map(|dir| dir.join("uv"))
@@ -91,7 +91,7 @@ fn resolve_uv() -> std::io::Result<PathBuf> {
 }
 
 /// PATH for the child process: the inherited PATH plus the fallback directories, so `uv` can find `python`.
-fn child_path(uv: &Path) -> std::io::Result<OsString> {
+pub fn child_path(uv: &Path) -> std::io::Result<OsString> {
     let mut dirs = candidate_dirs();
     if let Some(parent) = uv.parent() {
         dirs.insert(0, parent.to_path_buf());
@@ -250,7 +250,7 @@ impl Drop for Sidecar {
 /// The slot lock is held only for the swap itself. Shutdown of the old process and the
 /// READY wait on the new one both run with the lock released, so `get_sidecar_connection`
 /// and other slot readers are never blocked for the duration of a reload.
-fn reload_blocking(slot: &Mutex<Arc<Sidecar>>) -> Result<ConnectionInfo, String> {
+pub fn reload_blocking(slot: &Mutex<Arc<Sidecar>>) -> Result<ConnectionInfo, String> {
     let previous = Arc::clone(&lock_slot(slot));
     previous.shutdown();
     let next = Sidecar::start(generate_token()).map_err(|error| error.to_string())?;
