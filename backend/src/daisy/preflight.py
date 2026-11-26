@@ -20,7 +20,9 @@ from typing import Final
 CHECK_TIMEOUT_SECONDS: Final[float] = 60.0
 PYTHON_SUFFIX: Final[str] = ".py"
 RUFF_LOCATION_PATTERN: Final[re.Pattern[str]] = re.compile(r"^.+:\d+:\d+: ")
-RUFF_REFORMAT_PREFIX: Final[str] = "Would reformat:"
+# Ruff's wording has varied across versions ("Would reformat: x.py", "1 file would be
+# reformatted"), so match the phrase anywhere on the line, case-insensitively.
+RUFF_REFORMAT_PATTERN: Final[re.Pattern[str]] = re.compile(r"would reformat", re.IGNORECASE)
 MYPY_ERROR_MARKER: Final[str] = ": error:"
 MYPY_WARNING_MARKER: Final[str] = ": warning:"
 
@@ -155,8 +157,12 @@ def _ruff_format(root: Path, files: list[str]) -> CheckResult:
     errors = tuple(
         line.strip()
         for line in (out + err).splitlines()
-        if line.strip().startswith(RUFF_REFORMAT_PREFIX)
+        if RUFF_REFORMAT_PATTERN.search(line)
     )
+    if code == 1 and not errors:
+        # Ruff reported a failure but no line we could parse. Name each file so the
+        # error still points at the file that needs formatting.
+        errors = tuple(f"{path}: would be reformatted by ruff format" for path in files)
     return CheckResult(
         name=name,
         passed=code == 0,

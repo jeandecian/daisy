@@ -89,7 +89,11 @@ def test_chat_stream_rejects_blank_message_with_422(db_path: Path) -> None:
 
 def test_health_stays_open(db_path: Path) -> None:
     client = TestClient(create_app(TOKEN, db_path=db_path))
-    assert client.get("/health").json() == {"status": "ok"}
+    response = client.get("/health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert "timestamp" in body
 
 
 def test_chat_stream_persists_user_and_assistant_messages(db_path: Path) -> None:
