@@ -5,7 +5,6 @@
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -185,11 +184,6 @@ pub async fn rollback_latest(
     })
     .await
     .map_err(|error| error.to_string())?
-}
-
-/// Path of the snapshot store, shown in diagnostics. Lives under the workspace root.
-pub fn snapshot_store_hint() -> PathBuf {
-    Path::new(BACKEND_DIR).join("..").join("backup")
 }
 
 #[cfg(test)]
