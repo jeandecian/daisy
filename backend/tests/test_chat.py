@@ -1,4 +1,6 @@
-"""Tests for chat schemas, SSE parsing, bearer auth, and Ollama stream relay."""
+"""Tests for chat schemas, SSE parsing, bearer auth, Ollama relay, and chat history."""
+
+from pathlib import Path
 
 import httpx
 import pytest
@@ -22,6 +24,11 @@ def ollama_transport(lines: list[str], status: int = 200) -> httpx.MockTransport
     return httpx.MockTransport(handler)
 
 
+@pytest.fixture
+def db_path(tmp_path: Path) -> Path:
+    return tmp_path / "daisy.db"
+
+
 def test_chat_request_defaults_model() -> None:
     assert ChatRequest(message="hi").model == DEFAULT_MODEL
 
@@ -37,13 +44,13 @@ def test_iter_sse_parses_events_and_multiline_data() -> None:
     assert list(iter_sse(lines)) == [("token", "a\nb"), ("message", "plain")]
 
 
-def test_chat_stream_relays_tokens_and_status() -> None:
+def test_chat_stream_relays_tokens_and_status(db_path: Path) -> None:
     lines = [
         '{"message": {"content": "Hel"}, "done": false}',
         '{"message": {"content": "lo"}, "done": false}',
         '{"done": true}',
     ]
-    client = TestClient(create_app(TOKEN, ollama_transport(lines)))
+    client = TestClient(create_app(TOKEN, ollama_transport(lines), db_path=db_path))
     response = client.post("/chat/stream", json={"message": "hi"}, headers=AUTH)
     assert response.status_code == 200
     events = list(iter_sse(response.text.splitlines()))
@@ -52,16 +59,18 @@ def test_chat_stream_relays_tokens_and_status() -> None:
     assert events[3][1] == '{"content":"lo"}'
 
 
-def test_chat_stream_reports_ollama_http_error() -> None:
-    client = TestClient(create_app(TOKEN, ollama_transport(["nope"], status=500)))
+def test_chat_stream_reports_ollama_http_error(db_path: Path) -> None:
+    client = TestClient(
+        create_app(TOKEN, ollama_transport(["nope"], status=500), db_path=db_path)
+    )
     response = client.post("/chat/stream", json={"message": "hi"}, headers=AUTH)
     events = list(iter_sse(response.text.splitlines()))
     assert events[-1][0] == "error"
     assert "HTTP 500" in events[-1][1]
 
 
-def test_chat_stream_requires_bearer_token() -> None:
-    client = TestClient(create_app(TOKEN, ollama_transport([])))
+def test_chat_stream_requires_bearer_token(db_path: Path) -> None:
+    client = TestClient(create_app(TOKEN, ollama_transport([]), db_path=db_path))
     response = client.post("/chat/stream", json={"message": "hi"})
     assert response.status_code == 401
     wrong = client.post(
@@ -72,12 +81,58 @@ def test_chat_stream_requires_bearer_token() -> None:
     assert wrong.status_code == 401
 
 
-def test_chat_stream_rejects_blank_message_with_422() -> None:
-    client = TestClient(create_app(TOKEN, ollama_transport([])))
+def test_chat_stream_rejects_blank_message_with_422(db_path: Path) -> None:
+    client = TestClient(create_app(TOKEN, ollama_transport([]), db_path=db_path))
     response = client.post("/chat/stream", json={"message": " "}, headers=AUTH)
     assert response.status_code == 422
 
 
-def test_health_stays_open() -> None:
-    client = TestClient(create_app(TOKEN))
+def test_health_stays_open(db_path: Path) -> None:
+    client = TestClient(create_app(TOKEN, db_path=db_path))
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_chat_stream_persists_user_and_assistant_messages(db_path: Path) -> None:
+    lines = [
+        '{"message": {"content": "Hel"}, "done": false}',
+        '{"message": {"content": "lo"}, "done": false}',
+        '{"done": true}',
+    ]
+    client = TestClient(create_app(TOKEN, ollama_transport(lines), db_path=db_path))
+    client.post("/chat/stream", json={"message": "hi"}, headers=AUTH)
+
+    history = client.get("/chat/history", headers=AUTH).json()
+    assert [(m["role"], m["content"]) for m in history] == [
+        ("user", "hi"),
+        ("assistant", "Hello"),
+    ]
+    assert history[1]["model"] == DEFAULT_MODEL
+    assert history[0]["model"] == DEFAULT_MODEL
+
+
+def test_chat_stream_error_saves_only_user_message(db_path: Path) -> None:
+    client = TestClient(
+        create_app(TOKEN, ollama_transport(["nope"], status=500), db_path=db_path)
+    )
+    client.post("/chat/stream", json={"message": "hi"}, headers=AUTH)
+    history = client.get("/chat/history", headers=AUTH).json()
+    assert [m["role"] for m in history] == ["user"]
+
+
+def test_chat_history_requires_bearer_token(db_path: Path) -> None:
+    client = TestClient(create_app(TOKEN, db_path=db_path))
+    assert client.get("/chat/history").status_code == 401
+    wrong = client.get("/chat/history", headers={"Authorization": "Bearer wrong"})
+    assert wrong.status_code == 401
+
+
+def test_chat_history_returns_empty_list_when_no_messages(db_path: Path) -> None:
+    client = TestClient(create_app(TOKEN, db_path=db_path))
+    response = client.get("/chat/history", headers=AUTH)
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_chat_history_rejects_out_of_range_limit(db_path: Path) -> None:
+    client = TestClient(create_app(TOKEN, db_path=db_path))
+    assert client.get("/chat/history?limit=0", headers=AUTH).status_code == 422

@@ -1,4 +1,4 @@
-"""Request and strict SSE event schemas for the chat streaming endpoint."""
+"""Request, persistence, and strict SSE event schemas for the chat endpoints."""
 
 from typing import Final, Literal
 
@@ -23,6 +23,18 @@ class ChatRequest(BaseModel):
         if not value.strip():
             raise ValueError("message must not be blank")
         return value
+
+
+class Message(BaseModel):
+    """A persisted chat message returned by GET /chat/history."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
+    role: str
+    content: str
+    model: str | None = None
+    created_at: str
 
 
 class TokenData(BaseModel):

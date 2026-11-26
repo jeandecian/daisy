@@ -10,16 +10,19 @@ import json
 import socket
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
+from pathlib import Path
 from typing import Final
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
+from daisy.db import DEFAULT_DB_PATH, get_history, init_db, save_message
 from daisy.schema import (
     ChatRequest,
+    Message,
     error_event,
     status_event,
     token_event,
@@ -32,18 +35,26 @@ SERVICE_NAME: Final[str] = "daisy-backend"
 OLLAMA_CHAT_URL: Final[str] = "http://127.0.0.1:11434/api/chat"
 OLLAMA_TIMEOUT: Final[httpx.Timeout] = httpx.Timeout(10.0, read=300.0)
 MAX_ERROR_BODY_CHARS: Final[int] = 500
+HISTORY_DEFAULT_LIMIT: Final[int] = 50
+HISTORY_MAX_LIMIT: Final[int] = 500
 
 
 async def stream_ollama_chat(
-    request: ChatRequest, transport: httpx.AsyncBaseTransport | None
+    request: ChatRequest,
+    transport: httpx.AsyncBaseTransport | None,
+    db_path: Path | None = None,
 ) -> AsyncIterator[dict[str, str]]:
-    """Relay Ollama's streamed chat JSON lines as strict SSE events."""
+    """Relay Ollama's streamed chat JSON lines as strict SSE events.
+
+    On successful completion the accumulated assistant text is persisted.
+    """
     yield status_event("connecting")
     payload = {
         "model": request.model,
         "messages": [{"role": "user", "content": request.message}],
         "stream": True,
     }
+    parts: list[str] = []
     try:
         async with httpx.AsyncClient(transport=transport, timeout=OLLAMA_TIMEOUT) as client:
             async with client.stream("POST", OLLAMA_CHAT_URL, json=payload) as response:
@@ -71,11 +82,13 @@ async def stream_ollama_chat(
                     message = chunk.get("message")
                     content = message.get("content") if isinstance(message, dict) else None
                     if isinstance(content, str) and content:
+                        parts.append(content)
                         yield token_event(content)
                     if chunk.get("done") is True:
                         finished = True
                         break
                 if finished:
+                    save_message("assistant", "".join(parts), model=request.model, db_path=db_path)
                     yield status_event("done")
                 else:
                     yield error_event("Ollama stream ended before completion")
@@ -86,9 +99,15 @@ async def stream_ollama_chat(
 
 
 def create_app(
-    auth_token: str, ollama_transport: httpx.AsyncBaseTransport | None = None
+    auth_token: str,
+    ollama_transport: httpx.AsyncBaseTransport | None = None,
+    db_path: Path | None = None,
 ) -> FastAPI:
-    """Build the FastAPI application guarded by the given bearer token."""
+    """Build the FastAPI application guarded by the given bearer token.
+
+    The SQLite database is initialized here, so it exists before the server starts.
+    """
+    resolved_db = init_db(db_path or DEFAULT_DB_PATH)
     app = FastAPI(title=SERVICE_NAME, docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.middleware("http")
@@ -118,7 +137,16 @@ def create_app(
 
     @app.post("/chat/stream")
     async def chat_stream(request: ChatRequest) -> EventSourceResponse:
-        return EventSourceResponse(stream_ollama_chat(request, ollama_transport))
+        save_message("user", request.message, model=request.model, db_path=resolved_db)
+        return EventSourceResponse(
+            stream_ollama_chat(request, ollama_transport, resolved_db)
+        )
+
+    @app.get("/chat/history", response_model=list[Message])
+    async def chat_history(
+        limit: int = Query(HISTORY_DEFAULT_LIMIT, ge=1, le=HISTORY_MAX_LIMIT),
+    ) -> list[dict[str, object]]:
+        return get_history(limit=limit, db_path=resolved_db)
 
     return app
 
@@ -139,6 +167,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=DEFAULT_PORT,
         help="Bind port; 0 requests an OS-assigned free port.",
     )
+    parser.add_argument(
+        "--db-path",
+        type=Path,
+        default=DEFAULT_DB_PATH,
+        help="SQLite database file for chat history; parent directories are created.",
+    )
     return parser.parse_args(argv)
 
 
@@ -157,13 +191,14 @@ def bind_socket(host: str, port: int) -> socket.socket:
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Bind the socket, announce the port on stdout, and serve until terminated."""
+    """Initialize the app and database, announce the port on stdout, and serve."""
     args = parse_args(argv)
+    app = create_app(args.auth_token, db_path=args.db_path)
     sock = bind_socket(args.host, args.port)
     actual_port = int(sock.getsockname()[1])
     print(f"READY:{actual_port}", flush=True)
     sys.stdout.flush()
-    config = uvicorn.Config(create_app(args.auth_token), log_level="warning")
+    config = uvicorn.Config(app, log_level="warning")
     uvicorn.Server(config).run(sockets=[sock])
 
 
