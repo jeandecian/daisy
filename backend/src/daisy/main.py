@@ -10,6 +10,7 @@ import json
 import socket
 import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final
 
@@ -108,6 +109,12 @@ async def stream_ollama_chat(
         yield error_event(f"Ollama request failed: {type(exc).__name__}")
 
 
+def health_payload(now: datetime | None = None) -> dict[str, str]:
+    """Return the health body: a status and the current UTC time in ISO 8601."""
+    moment = now if now is not None else datetime.now(UTC)
+    return {"status": "ok", "timestamp": moment.isoformat()}
+
+
 def create_app(
     auth_token: str,
     ollama_transport: httpx.AsyncBaseTransport | None = None,
@@ -150,7 +157,7 @@ def create_app(
 
     @app.get("/health")
     async def health() -> dict[str, str]:
-        return {"status": "ok"}
+        return health_payload()
 
     @app.get("/")
     async def root() -> dict[str, str]:
