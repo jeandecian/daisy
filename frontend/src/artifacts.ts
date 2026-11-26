@@ -130,7 +130,7 @@ function splitLines(text: string): string[] {
     return [];
   }
   const lines = text.split("\n");
-  if (lines.at(-1) === "") {
+  if (lines[lines.length - 1] === "") {
     lines.pop();
   }
   return lines;
