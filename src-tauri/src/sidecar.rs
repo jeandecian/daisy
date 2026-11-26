@@ -1,6 +1,9 @@
 //! Python sidecar lifecycle: spawn, READY handshake, connection info, and shutdown.
 
+use std::env;
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread;
@@ -14,6 +17,10 @@ use uuid::Uuid;
 const BACKEND_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../backend");
 const READY_PREFIX: &str = "READY:";
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Directories GUI-launched apps often miss from PATH (Finder inherits a minimal PATH).
+const FALLBACK_BIN_DIRS: &[&str] = &[".local/bin", ".cargo/bin"];
+const FALLBACK_ABSOLUTE_DIRS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin"];
 
 #[derive(Default)]
 struct SidecarState {
@@ -39,12 +46,54 @@ pub fn generate_token() -> String {
     Uuid::new_v4().simple().to_string()
 }
 
+/// Every directory to search for `uv`: the inherited PATH first, then standard install locations.
+fn candidate_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = env::var_os("PATH")
+        .map(|path| env::split_paths(&path).collect())
+        .unwrap_or_default();
+    if let Some(home) = env::var_os("HOME").map(PathBuf::from) {
+        dirs.extend(FALLBACK_BIN_DIRS.iter().map(|rel| home.join(rel)));
+    }
+    dirs.extend(FALLBACK_ABSOLUTE_DIRS.iter().map(PathBuf::from));
+    dirs
+}
+
+/// Finds an executable `uv`, returning its absolute path or a clear error listing what was searched.
+fn resolve_uv() -> std::io::Result<PathBuf> {
+    let dirs = candidate_dirs();
+    dirs.iter()
+        .map(|dir| dir.join("uv"))
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| {
+            let searched = dirs
+                .iter()
+                .map(|dir| dir.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("could not find `uv` (install it from astral.sh/uv); searched: {searched}"),
+            )
+        })
+}
+
+/// PATH for the child process: the inherited PATH plus the fallback directories, so `uv` can find `python`.
+fn child_path(uv: &Path) -> std::io::Result<OsString> {
+    let mut dirs = candidate_dirs();
+    if let Some(parent) = uv.parent() {
+        dirs.insert(0, parent.to_path_buf());
+    }
+    env::join_paths(dirs).map_err(|error| std::io::Error::other(error.to_string()))
+}
+
 impl Sidecar {
     /// Spawns `uv run python -m daisy.main --auth-token <token>` and starts watching its stdout.
     pub fn start(token: String) -> std::io::Result<Arc<Self>> {
-        let mut child = Command::new("uv")
+        let uv = resolve_uv()?;
+        let mut child = Command::new(&uv)
             .args(["run", "python", "-m", "daisy.main", "--auth-token", &token])
             .current_dir(BACKEND_DIR)
+            .env("PATH", child_path(&uv)?)
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .spawn()?;
