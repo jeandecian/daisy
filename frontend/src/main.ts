@@ -18,6 +18,12 @@ interface SidecarConnection {
 const CHAT_MODEL = "qwen2.5-coder:7b";
 const DEV_CONNECTION_KEY = "daisy.devConnection";
 
+/**
+ * SSE event boundary per the spec: a blank line, where a line ends in CRLF, LF, or CR.
+ * sse-starlette defaults to CRLF, so a plain "\n\n" split never matches.
+ */
+const SSE_BOUNDARY = /\r\n\r\n|\n\n|\r\r/;
+
 const messages: ChatMessage[] = [];
 let connection: SidecarConnection | null = null;
 let streaming = false;
@@ -82,16 +88,17 @@ function setStreaming(active: boolean): void {
   input.disabled = active;
 }
 
-/** Parses one complete SSE block (lines separated by \n) into its event name and data payload. */
+/** Parses one complete SSE block into its event name and data payload. Accepts CRLF, LF, or CR line endings. */
 function parseSseBlock(block: string): { event: string; data: string } | null {
   let event = "message";
   const dataLines: string[] = [];
-  for (const line of block.split("\n")) {
+  for (const line of block.split(/\r\n|\n|\r/)) {
     if (line.startsWith("event:")) {
       event = line.slice("event:".length).trim();
     } else if (line.startsWith("data:")) {
       dataLines.push(line.slice("data:".length).replace(/^ /, ""));
     }
+    // Lines starting with ":" are comments (keep-alive pings) and are ignored.
   }
   if (dataLines.length === 0) {
     return null;
@@ -152,25 +159,38 @@ async function streamReply(text: string, bubble: HTMLElement): Promise<void> {
     }
   };
 
-  while (!finished) {
-    const { value, done } = await reader.read();
-    if (done) {
-      break;
-    }
-    buffer += decoder.decode(value, { stream: true });
-    let boundary = buffer.indexOf("\n\n");
-    while (boundary !== -1) {
-      const block = buffer.slice(0, boundary);
-      buffer = buffer.slice(boundary + 2);
+  /** Emits every complete event in `buffer` and keeps any trailing partial event. */
+  const drainBuffer = (): void => {
+    let match = SSE_BOUNDARY.exec(buffer);
+    while (match) {
+      const block = buffer.slice(0, match.index);
+      buffer = buffer.slice(match.index + match[0].length);
       const parsed = parseSseBlock(block);
       if (parsed) {
         handleEvent(parsed.event, parsed.data);
       }
       if (finished) {
-        break;
+        return;
       }
-      boundary = buffer.indexOf("\n\n");
+      match = SSE_BOUNDARY.exec(buffer);
     }
+  };
+
+  while (!finished) {
+    const { value, done } = await reader.read();
+    if (done) {
+      buffer += decoder.decode();
+      drainBuffer();
+      if (!finished && buffer.trim() !== "") {
+        const parsed = parseSseBlock(buffer);
+        if (parsed) {
+          handleEvent(parsed.event, parsed.data);
+        }
+      }
+      break;
+    }
+    buffer += decoder.decode(value, { stream: true });
+    drainBuffer();
   }
   await reader.cancel().catch(() => undefined);
   bubble.classList.remove("chat-message--streaming");
