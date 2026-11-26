@@ -1,6 +1,27 @@
+mod sidecar;
+
+use std::sync::Arc;
+
+use sidecar::{generate_token, get_sidecar_connection, Sidecar};
+use tauri::{Manager, RunEvent};
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .run(tauri::generate_context!())
-        .expect("error while running Daisy");
+    let app = tauri::Builder::default()
+        .setup(|app| {
+            let sidecar = Sidecar::start(generate_token())?;
+            app.manage(sidecar);
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![get_sidecar_connection])
+        .build(tauri::generate_context!())
+        .expect("error while building Daisy");
+
+    app.run(|handle, event| {
+        if let RunEvent::Exit = event {
+            if let Some(sidecar) = handle.try_state::<Arc<Sidecar>>() {
+                sidecar.shutdown();
+            }
+        }
+    });
 }
