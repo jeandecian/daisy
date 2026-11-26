@@ -17,6 +17,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI, Query, Request, Response
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
 from daisy.db import DEFAULT_DB_PATH, get_history, init_db, save_message
@@ -37,6 +38,15 @@ OLLAMA_TIMEOUT: Final[httpx.Timeout] = httpx.Timeout(10.0, read=300.0)
 MAX_ERROR_BODY_CHARS: Final[int] = 500
 HISTORY_DEFAULT_LIMIT: Final[int] = 50
 HISTORY_MAX_LIMIT: Final[int] = 500
+CORS_ORIGINS: Final[list[str]] = [
+    "tauri://localhost",
+    "http://tauri.localhost",
+    "http://localhost:5173",
+]
+# Any loopback origin on any port (the sidecar port is ephemeral).
+CORS_ORIGIN_REGEX: Final[str] = r"^http://127\.0\.0\.1(:\d+)?$"
+CORS_METHODS: Final[list[str]] = ["GET", "POST", "OPTIONS"]
+CORS_HEADERS: Final[list[str]] = ["Authorization", "Content-Type"]
 
 
 async def stream_ollama_chat(
@@ -126,6 +136,17 @@ def create_app(
                 headers={"WWW-Authenticate": "Bearer"},
             )
         return await call_next(request)
+
+    # Added after the bearer middleware so CORS is the outermost layer: preflight
+    # OPTIONS is answered before auth, and 401 responses still carry CORS headers
+    # so the webview can read them instead of reporting a network failure.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_origin_regex=CORS_ORIGIN_REGEX,
+        allow_methods=CORS_METHODS,
+        allow_headers=CORS_HEADERS,
+    )
 
     @app.get("/health")
     async def health() -> dict[str, str]:

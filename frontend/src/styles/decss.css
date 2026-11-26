@@ -1,0 +1,279 @@
+/*
+ * decss design tokens for Daisy.
+ * Liúbái aesthetic: generous whitespace, calm contrast, squircle-like radii.
+ */
+
+:root {
+  /* Light theme */
+  --color-bg: #fbfbfa;        /* Vellum */
+  --color-text: #18181b;      /* Ink */
+  --color-accent: #1e3a8a;    /* Lapis */
+  --color-border: rgba(24, 24, 27, 0.08);
+  --color-muted: rgba(24, 24, 27, 0.55);
+  --color-surface: rgba(24, 24, 27, 0.03);
+
+  --radius-squircle: 8px;
+  --line-height-base: 1.65;
+  --space-xs: 0.5rem;
+  --space-sm: 1rem;
+  --space-md: 2rem;
+  --space-lg: 4rem;
+  --space-xl: 8rem;
+
+  --artifact-width: minmax(0, 1fr);
+  --artifact-collapsed-width: 3rem;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0f0f11;      /* Basalt */
+    --color-text: #f4f4f5;    /* Silk */
+    --color-accent: #1e3a8a;  /* Lapis retained as accent */
+    --color-border: rgba(244, 244, 245, 0.08);
+    --color-muted: rgba(244, 244, 245, 0.55);
+    --color-surface: rgba(244, 244, 245, 0.03);
+    color-scheme: dark;
+  }
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  line-height: var(--line-height-base);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Split-view shell: chat (left) | divider | artifacts (right) */
+.app-container {
+  height: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px var(--artifact-width);
+}
+
+.app-container[data-collapsed="true"] {
+  --artifact-width: var(--artifact-collapsed-width);
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane-divider {
+  background: var(--color-border);
+}
+
+/* Chat pane */
+.pane-chat {
+  padding: var(--space-sm) var(--space-md) var(--space-md);
+}
+
+.chat-header {
+  padding: var(--space-xs) 0 var(--space-sm);
+}
+
+.title {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--color-text);
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  max-width: 44rem;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--space-sm) 0;
+}
+
+.chat-placeholder,
+.artifact-empty {
+  margin: auto;
+  color: var(--color-muted);
+  text-align: center;
+}
+
+.chat-message {
+  max-width: 85%;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-squircle);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.chat-message--user {
+  align-self: flex-end;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+}
+
+.chat-message--assistant {
+  align-self: flex-start;
+}
+
+.chat-input-container {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-xs);
+  max-width: 44rem;
+  width: 100%;
+  margin: 0 auto;
+  padding: var(--space-xs);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-squircle);
+  background: var(--color-surface);
+}
+
+.chat-input-container:focus-within {
+  border-color: var(--color-accent);
+}
+
+.chat-input {
+  flex: 1;
+  resize: none;
+  min-height: 2.25rem;
+  max-height: 10rem;
+  padding: 0.5rem var(--space-xs);
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  line-height: var(--line-height-base);
+}
+
+.chat-input::placeholder {
+  color: var(--color-muted);
+}
+
+.chat-send,
+.artifact-toggle {
+  font: inherit;
+  font-size: 0.875rem;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-squircle);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.chat-send {
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #ffffff;
+}
+
+.chat-send:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.chat-send:focus-visible,
+.artifact-toggle:focus-visible,
+.chat-input:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Artifacts pane */
+.pane-artifacts {
+  overflow: hidden;
+}
+
+.artifact-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.artifact-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+
+.app-container[data-collapsed="true"] .artifact-title,
+.app-container[data-collapsed="true"] .artifact-content {
+  display: none;
+}
+
+.app-container[data-collapsed="true"] .artifact-header {
+  justify-content: center;
+  border-bottom: none;
+}
+
+.artifact-content {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-sm);
+}
+
+.artifact-content:not(:has(.artifact-empty)) {
+  justify-content: flex-start;
+}
+
+.artifact-card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-squircle);
+  margin-bottom: var(--space-sm);
+  overflow: hidden;
+}
+
+.artifact-card-header {
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 0.875rem;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.artifact-card-body {
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8125rem;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+@media (max-width: 720px) {
+  .app-container {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) 1px minmax(0, 40%);
+  }
+
+  .app-container[data-collapsed="true"] {
+    grid-template-rows: minmax(0, 1fr) 1px 3rem;
+  }
+
+  .pane-chat {
+    padding: var(--space-sm);
+  }
+}
