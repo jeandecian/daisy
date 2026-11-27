@@ -4,7 +4,6 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-
 from daisy.db import get_history, init_db, save_message
 
 
@@ -53,7 +52,9 @@ def test_save_and_get_history_round_trip(tmp_path: Path) -> None:
     assert [row["id"] for row in history] == [first, second, third]
 
 
-def test_get_history_returns_most_recent_limit_in_ascending_order(tmp_path: Path) -> None:
+def test_get_history_returns_most_recent_limit_in_ascending_order(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "daisy.db"
     for index in range(5):
         save_message("user", f"msg {index}", db_path=db_path)

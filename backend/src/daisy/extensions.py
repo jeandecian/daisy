@@ -24,7 +24,9 @@ from typing import Any, Final
 EXTENSIONS_DIRNAME: Final[str] = "extensions"
 META_ATTRIBUTE: Final[str] = "EXTENSION_META"
 ENTRYPOINT_NAME: Final[str] = "run"
-REQUIRED_META_KEYS: Final[frozenset[str]] = frozenset({"name", "version", "description"})
+REQUIRED_META_KEYS: Final[frozenset[str]] = frozenset(
+    {"name", "version", "description"}
+)
 NAME_PATTERN: Final[re.Pattern[str]] = re.compile(r"[a-z][a-z0-9_]{0,63}")
 VERSION_PATTERN: Final[re.Pattern[str]] = re.compile(r"\d+\.\d+\.\d+")
 MAX_DESCRIPTION_CHARS: Final[int] = 300
@@ -93,7 +95,9 @@ def validate_meta(raw: object) -> ExtensionMeta:
     if not isinstance(description, str) or not description.strip():
         raise ExtensionError("extension description must be a non-empty string")
     if len(description) > MAX_DESCRIPTION_CHARS:
-        raise ExtensionError(f"extension description exceeds {MAX_DESCRIPTION_CHARS} characters")
+        raise ExtensionError(
+            f"extension description exceeds {MAX_DESCRIPTION_CHARS} characters"
+        )
     return ExtensionMeta(name=name, version=version, description=description)
 
 
@@ -133,7 +137,9 @@ def load_extension(path: Path, extensions_root: Path) -> LoadedExtension:
         meta = validate_meta(getattr(module, META_ATTRIBUTE, None))
         run = getattr(module, ENTRYPOINT_NAME, None)
         if not callable(run):
-            raise ExtensionError(f"extension must define a callable {ENTRYPOINT_NAME}()")
+            raise ExtensionError(
+                f"extension must define a callable {ENTRYPOINT_NAME}()"
+            )
     except ExtensionError:
         sys.modules.pop(module_name, None)
         raise

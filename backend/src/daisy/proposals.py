@@ -86,7 +86,9 @@ class ProposalManager:
     ) -> None:
         self._workspace = workspace.resolve()
         default_root = self._workspace / DEFAULT_BACKUP_DIRNAME
-        self._backup_root = (backup_root if backup_root is not None else default_root).resolve()
+        self._backup_root = (
+            backup_root if backup_root is not None else default_root
+        ).resolve()
         self._proposals: dict[str, Proposal] = {}
         self._judge = judge
 
@@ -145,7 +147,9 @@ class ProposalManager:
         except KeyError:
             raise ProposalError(f"unknown proposal: {proposal_id}") from None
 
-    def _decide(self, proposal_id: str, decided_by: str, status: ProposalStatus) -> Proposal:
+    def _decide(
+        self, proposal_id: str, decided_by: str, status: ProposalStatus
+    ) -> Proposal:
         proposal = self.get(proposal_id)
         approver = decided_by.strip()
         if not approver:

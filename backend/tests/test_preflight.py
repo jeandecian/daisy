@@ -3,7 +3,6 @@
 import importlib.util
 
 import pytest
-
 from daisy.preflight import (
     PreflightInputError,
     autoformat_python,
@@ -12,7 +11,8 @@ from daisy.preflight import (
 )
 
 requires_tools = pytest.mark.skipif(
-    importlib.util.find_spec("ruff") is None or importlib.util.find_spec("mypy") is None,
+    importlib.util.find_spec("ruff") is None
+    or importlib.util.find_spec("mypy") is None,
     reason="ruff and mypy are dev dependencies",
 )
 
@@ -52,7 +52,11 @@ def test_clean_code_passes_all_checks() -> None:
     report = run_preflight({"pkg/clean.py": CLEAN})
 
     assert report.passed is True
-    assert [check.name for check in report.checks] == ["ruff_check", "ruff_format", "mypy"]
+    assert [check.name for check in report.checks] == [
+        "ruff_check",
+        "ruff_format",
+        "mypy",
+    ]
     assert all(check.passed for check in report.checks)
     assert all(check.errors == () for check in report.checks)
     assert all(check.returncode == 0 for check in report.checks)

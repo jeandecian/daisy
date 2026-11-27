@@ -4,7 +4,6 @@ import importlib.util
 from pathlib import Path
 
 import pytest
-
 from daisy.backup import rollback_snapshot
 from daisy.proposals import (
     ApprovalRequiredError,
@@ -15,7 +14,8 @@ from daisy.proposals import (
 )
 
 requires_tools = pytest.mark.skipif(
-    importlib.util.find_spec("ruff") is None or importlib.util.find_spec("mypy") is None,
+    importlib.util.find_spec("ruff") is None
+    or importlib.util.find_spec("mypy") is None,
     reason="ruff and mypy are dev dependencies",
 )
 
@@ -153,7 +153,9 @@ def test_apply_twice_is_refused(workspace: Path) -> None:
         manager.apply(proposal.proposal_id)
 
 
-def test_propose_rejects_path_escaping_workspace(tmp_path: Path, workspace: Path) -> None:
+def test_propose_rejects_path_escaping_workspace(
+    tmp_path: Path, workspace: Path
+) -> None:
     manager = ProposalManager(workspace)
 
     with pytest.raises(ProposalError, match="stay inside the workspace"):

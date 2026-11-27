@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from daisy.extensions import (
     EXTENSIONS_DIRNAME,
     MODULE_PREFIX,
@@ -115,26 +114,34 @@ def test_extensions_are_namespace_isolated(tmp_path: Path) -> None:
         ("nometa.py", "def run(payload):\n    return {}\n", "must be a dict"),
         (
             "badname.py",
-            'EXTENSION_META = {"name": "Bad-Name", "version": "1.0.0", "description": "x"}\n'
-            "def run(payload):\n    return {}\n",
+            (
+                'EXTENSION_META = {"name": "Bad-Name", "version": "1.0.0", "description": "x"}\n'
+                "def run(payload):\n    return {}\n"
+            ),
             "invalid extension name",
         ),
         (
             "badversion.py",
-            'EXTENSION_META = {"name": "badver", "version": "1.0", "description": "x"}\n'
-            "def run(payload):\n    return {}\n",
+            (
+                'EXTENSION_META = {"name": "badver", "version": "1.0", "description": "x"}\n'
+                "def run(payload):\n    return {}\n"
+            ),
             "invalid extension version",
         ),
         (
             "nodesc.py",
-            'EXTENSION_META = {"name": "nodesc", "version": "1.0.0"}\n'
-            "def run(payload):\n    return {}\n",
+            (
+                'EXTENSION_META = {"name": "nodesc", "version": "1.0.0"}\n'
+                "def run(payload):\n    return {}\n"
+            ),
             "missing keys",
         ),
         (
             "extra.py",
-            'EXTENSION_META = {"name": "extra", "version": "1.0.0", "description": "x", "x": 1}\n'
-            "def run(payload):\n    return {}\n",
+            (
+                'EXTENSION_META = {"name": "extra", "version": "1.0.0", "description": "x", "x": 1}\n'
+                "def run(payload):\n    return {}\n"
+            ),
             "unknown keys",
         ),
         (
@@ -144,8 +151,10 @@ def test_extensions_are_namespace_isolated(tmp_path: Path) -> None:
         ),
         (
             "notcallable.py",
-            'EXTENSION_META = {"name": "notcall", "version": "1.0.0", "description": "x"}\n'
-            "run = 5\n",
+            (
+                'EXTENSION_META = {"name": "notcall", "version": "1.0.0", "description": "x"}\n'
+                "run = 5\n"
+            ),
             "callable run()",
         ),
         ("syntax.py", "def (\n", "failed to import"),
@@ -209,7 +218,9 @@ def test_load_extension_rejects_path_outside_root(tmp_path: Path) -> None:
 
 
 def test_validate_meta_accepts_exact_shape() -> None:
-    meta = validate_meta({"name": "ok_name", "version": "0.2.10", "description": "Fine."})
+    meta = validate_meta(
+        {"name": "ok_name", "version": "0.2.10", "description": "Fine."}
+    )
 
     assert meta.name == "ok_name"
     assert meta.version == "0.2.10"

@@ -24,7 +24,9 @@ PYTHON_SUFFIX: Final[str] = ".py"
 RUFF_LOCATION_PATTERN: Final[re.Pattern[str]] = re.compile(r"^.+:\d+:\d+: ")
 # Ruff's wording has varied across versions ("Would reformat: x.py", "1 file would be
 # reformatted"), so match the phrase anywhere on the line, case-insensitively.
-RUFF_REFORMAT_PATTERN: Final[re.Pattern[str]] = re.compile(r"would reformat", re.IGNORECASE)
+RUFF_REFORMAT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"would reformat", re.IGNORECASE
+)
 MYPY_ERROR_MARKER: Final[str] = ": error:"
 MYPY_WARNING_MARKER: Final[str] = ": warning:"
 
