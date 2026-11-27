@@ -1,9 +1,13 @@
 """Staged, human-approved changes to workspace files.
 
-Flow: propose (stores content and runs pre-flight) -> approve or reject by a named human
--> apply. ``apply`` is the only function that writes to the workspace, and it refuses to
-run unless the proposal is APPROVED. Before writing, it snapshots every target with
-``daisy.backup`` so a bad write can be reverted with ``rollback_snapshot``.
+Flow: propose (stores content, runs pre-flight, and runs the LLM judge if one is configured)
+-> approve or reject by a named human -> apply. ``apply`` is the only function that writes to
+the workspace, and it refuses to run unless the proposal is APPROVED. Before writing, it
+snapshots every target with ``daisy.backup`` so a bad write can be reverted with
+``rollback_snapshot``.
+
+The judge's verdict is advisory. It is stored on the proposal but never gates approval or
+apply; the human decision does.
 
 State is held in memory for the life of the sidecar process. Approvals do not persist
 across restarts, so a restart always returns to a closed gate.
@@ -19,6 +23,7 @@ from pathlib import Path
 from typing import Final
 
 from daisy.backup import SnapshotError, create_snapshot, rollback_snapshot
+from daisy.judge import JudgeProvider, JudgeVerdict
 from daisy.preflight import PreflightInputError, PreflightReport, run_preflight, validate_relpath
 
 DEFAULT_BACKUP_DIRNAME: Final[str] = "backup"
@@ -58,16 +63,23 @@ class Proposal:
     decided_by: str | None = None
     snapshot_id: str | None = None
     error: str | None = None
+    judge_verdict: JudgeVerdict | None = None
 
 
 class ProposalManager:
     """Stages proposals and enforces the approval gate before any write."""
 
-    def __init__(self, workspace: Path, backup_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        backup_root: Path | None = None,
+        judge: JudgeProvider | None = None,
+    ) -> None:
         self._workspace = workspace.resolve()
         default_root = self._workspace / DEFAULT_BACKUP_DIRNAME
         self._backup_root = (backup_root if backup_root is not None else default_root).resolve()
         self._proposals: dict[str, Proposal] = {}
+        self._judge = judge
 
     def _target(self, raw: str) -> Path:
         """Resolve a proposed path, rejecting anything outside the workspace or in the store."""
@@ -83,7 +95,7 @@ class ProposalManager:
         return target
 
     def propose(self, changes: Mapping[str, str]) -> Proposal:
-        """Stage a change set and run pre-flight checks. Nothing is written."""
+        """Stage a change set, run pre-flight checks and the judge. Nothing is written."""
         if not changes:
             raise ProposalError("a proposal needs at least one change")
         targets = [self._target(raw) for raw in changes]
@@ -100,7 +112,17 @@ class ProposalManager:
             status=ProposalStatus.PENDING,
             created_at=datetime.now(UTC),
         )
+        if self._judge is not None:
+            proposal.judge_verdict = self._judge.audit(proposal.changes)
         self._proposals[proposal.proposal_id] = proposal
+        return proposal
+
+    def audit(self, proposal_id: str) -> Proposal:
+        """Run the judge on an existing proposal and store its verdict. Nothing is written."""
+        proposal = self.get(proposal_id)
+        if self._judge is None:
+            raise ProposalError("no LLM judge is configured")
+        proposal.judge_verdict = self._judge.audit(proposal.changes)
         return proposal
 
     def get(self, proposal_id: str) -> Proposal:

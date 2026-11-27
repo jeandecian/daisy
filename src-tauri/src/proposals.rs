@@ -1,9 +1,9 @@
-//! Tauri commands for the proposal lifecycle and the extensions listing.
+//! Tauri commands for the proposal lifecycle, the LLM judge and the extensions listing.
 //!
 //! Each command forwards to the live sidecar over loopback HTTP with the current port and
 //! ephemeral token, and returns the sidecar's JSON body unchanged, so the frontend sees
-//! the shapes defined by the Python side. Non-2xx responses become errors carrying the
-//! sidecar's `detail` message.
+//! the shapes defined by the Python side (including `judge_verdict`). Non-2xx responses
+//! become errors carrying the sidecar's `detail` message.
 
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
@@ -19,6 +19,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Propose runs ruff and mypy, which can take a while on a cold cache.
 const PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(200);
+/// The judge may call a cloud or local LLM; the sidecar allows 60 seconds per call.
+const JUDGE_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_PROPOSAL_ID_LEN: usize = 64;
 
 struct HttpReply {
@@ -177,6 +179,23 @@ pub async fn propose_proposal(
             Some(&body),
             PREFLIGHT_TIMEOUT,
         )
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// Runs the LLM judge on a proposal and returns the proposal with `judge_verdict` set.
+/// The verdict is advisory: nothing is written and the approval gate is unchanged.
+#[tauri::command]
+pub async fn judge_proposal(
+    handle: State<'_, SidecarHandle>,
+    proposal_id: String,
+) -> Result<Value, String> {
+    let id = validated_id(&proposal_id)?.to_owned();
+    let sidecar = handle.current();
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = format!("/proposals/{id}/judge");
+        forward(&sidecar, "POST", &path, None, JUDGE_TIMEOUT)
     })
     .await
     .map_err(|error| error.to_string())?

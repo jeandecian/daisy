@@ -1,5 +1,5 @@
 /*
- * Artifacts panel: proposals, diffs, pre-flight badges and HITL controls.
+ * Artifacts panel: proposals, diffs, pre-flight badges, judge verdicts and HITL controls.
  * Uses the decss tokens from decss.css. Quiet surfaces, 8px squircle radius, hairline borders.
  */
 
@@ -151,6 +151,85 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.75rem;
   overflow-wrap: anywhere;
+}
+
+/* LLM judge */
+.judge-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-squircle);
+  background: var(--color-surface);
+}
+
+.judge-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+
+.judge-badge {
+  padding: 0.2rem 0.7rem;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.judge-badge[data-verdict="approved"] {
+  background: #e4f5ea;
+  border-color: #b9e0c6;
+  color: #1f6b3a;
+}
+
+.judge-badge[data-verdict="warning"] {
+  background: #fbf1dc;
+  border-color: #efd9a4;
+  color: #8a5a00;
+}
+
+.judge-badge[data-verdict="rejected"] {
+  background: #fbe6e6;
+  border-color: #f1bcbc;
+  color: #9c1f1f;
+  font-weight: 700;
+}
+
+.judge-summary {
+  margin: 0;
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
+.judge-warning {
+  margin: 0;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-squircle);
+  background: #fbe6e6;
+  color: #9c1f1f;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.judge-risks ul {
+  margin: 0;
+  padding-left: var(--space-sm);
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
+
+.judge-risks li + li {
+  margin-top: 0.2rem;
+}
+
+.judge-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 
 /* Diff */

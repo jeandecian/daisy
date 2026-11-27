@@ -25,6 +25,7 @@ from sse_starlette.sse import EventSourceResponse
 from daisy.backup import DEFAULT_WORKSPACE
 from daisy.db import DEFAULT_DB_PATH, get_history, init_db, save_message
 from daisy.extensions import DiscoveryResult, discover_extensions
+from daisy.judge import JudgeProvider, select_judge_provider
 from daisy.preflight import CheckResult, PreflightReport
 from daisy.proposals import (
     ApprovalRequiredError,
@@ -59,6 +60,23 @@ CORS_ORIGIN_REGEX: Final[str] = r"^http://127\.0\.0\.1(:\d+)?$"
 CORS_METHODS: Final[list[str]] = ["GET", "POST", "OPTIONS"]
 CORS_HEADERS: Final[list[str]] = ["Authorization", "Content-Type"]
 
+# Instructs the model to emit file changes as daisy-proposal fences, which the frontend
+# stages in the artifacts panel for human approval. Nothing is written by the model itself.
+SYSTEM_PROMPT: Final[str] = """You are Daisy, a local coding assistant.
+
+When your reply creates or modifies a file, including an extension under extensions/, put the complete proposed file content in a fenced block opened exactly like this:
+
+```daisy-proposal path=<workspace-relative path>
+<complete file content>
+```
+
+Rules:
+- Use a workspace-relative path such as extensions/my_tool.py. Never use an absolute path or a ".." segment.
+- Give the full file content, not a diff or a fragment.
+- Before the block, briefly explain what the proposal does and why.
+- Never say the file has been written or applied. The user reviews and approves every proposal in the artifacts panel.
+- Use this fence only for real file changes. For illustrative snippets, use an ordinary code fence."""
+
 
 class ProposeRequest(BaseModel):
     """Body of POST /proposals/propose: workspace-relative path to full proposed content."""
@@ -79,12 +97,16 @@ async def stream_ollama_chat(
 ) -> AsyncIterator[dict[str, str]]:
     """Relay Ollama's streamed chat JSON lines as strict SSE events.
 
-    On successful completion the accumulated assistant text is persisted.
+    The system prompt is sent ahead of the user message so the model knows the proposal
+    fence format. On successful completion the accumulated assistant text is persisted.
     """
     yield status_event("connecting")
     payload = {
         "model": request.model,
-        "messages": [{"role": "user", "content": request.message}],
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": request.message},
+        ],
         "stream": True,
     }
     parts: list[str] = []
@@ -168,6 +190,9 @@ def _proposal_json(proposal: Proposal) -> dict[str, object]:
         "decided_by": proposal.decided_by,
         "snapshot_id": proposal.snapshot_id,
         "error": proposal.error,
+        "judge_verdict": (
+            None if proposal.judge_verdict is None else proposal.judge_verdict.to_json()
+        ),
         "preflight": _report_json(proposal.report),
     }
 
@@ -204,17 +229,20 @@ def create_app(
     ollama_transport: httpx.AsyncBaseTransport | None = None,
     db_path: Path | None = None,
     workspace: Path | None = None,
+    judge: JudgeProvider | None = None,
 ) -> FastAPI:
     """Build the FastAPI application guarded by the given bearer token.
 
     The SQLite database is initialized here, so it exists before the server starts.
     The proposal manager and the extension discovery result are stored on ``app.state``,
     so every request sees the same instances. ``workspace`` defaults to the project root.
+    ``judge`` defaults to the provider named by DAISY_JUDGE_PROVIDER (heuristic if unset).
     """
     resolved_db = init_db(db_path or DEFAULT_DB_PATH)
     resolved_workspace = (workspace if workspace is not None else DEFAULT_WORKSPACE).resolve()
+    resolved_judge = judge if judge is not None else select_judge_provider()
     app = FastAPI(title=SERVICE_NAME, docs_url=None, redoc_url=None, openapi_url=None)
-    app.state.proposals = ProposalManager(resolved_workspace)
+    app.state.proposals = ProposalManager(resolved_workspace, judge=resolved_judge)
     app.state.extensions = discover_extensions(resolved_workspace)
 
     @app.middleware("http")
@@ -306,6 +334,17 @@ def create_app(
         except ProposalError as exc:
             # Raised after the write failed and the snapshot was restored.
             raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return _proposal_json(proposal)
+
+    @app.post("/proposals/{proposal_id}/judge")
+    def judge_proposal(proposal_id: str, request: Request) -> dict[str, object]:
+        """Run the LLM judge on a proposal. The verdict is advisory and nothing is written."""
+        manager: ProposalManager = request.app.state.proposals
+        _find_proposal(manager, proposal_id)
+        try:
+            proposal = manager.audit(proposal_id)
+        except ProposalError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return _proposal_json(proposal)
 
     @app.get("/extensions")
