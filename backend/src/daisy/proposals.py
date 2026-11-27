@@ -1,10 +1,13 @@
 """Staged, human-approved changes to workspace files.
 
-Flow: propose (stores content, runs pre-flight, and runs the LLM judge if one is configured)
--> approve or reject by a named human -> apply. ``apply`` is the only function that writes to
-the workspace, and it refuses to run unless the proposal is APPROVED. Before writing, it
-snapshots every target with ``daisy.backup`` so a bad write can be reverted with
-``rollback_snapshot``.
+Flow: propose (auto-formats Python with ``ruff format``, stores the formatted content, runs
+pre-flight, and runs the LLM judge if one is configured) -> approve or reject by a named human
+-> apply. ``apply`` is the only function that writes to the workspace, and it refuses to run
+unless the proposal is APPROVED. Before writing, it snapshots every target with ``daisy.backup``
+so a bad write can be reverted with ``rollback_snapshot``.
+
+The stored content is the content that is checked and applied, so the human reviews exactly
+what will be written.
 
 The judge's verdict is advisory. It is stored on the proposal but never gates approval or
 apply; the human decision does.
@@ -24,7 +27,13 @@ from typing import Final
 
 from daisy.backup import SnapshotError, create_snapshot, rollback_snapshot
 from daisy.judge import JudgeProvider, JudgeVerdict
-from daisy.preflight import PreflightInputError, PreflightReport, run_preflight, validate_relpath
+from daisy.preflight import (
+    PreflightInputError,
+    PreflightReport,
+    autoformat_python,
+    run_preflight,
+    validate_relpath,
+)
 
 DEFAULT_BACKUP_DIRNAME: Final[str] = "backup"
 
@@ -77,7 +86,9 @@ class ProposalManager:
     ) -> None:
         self._workspace = workspace.resolve()
         default_root = self._workspace / DEFAULT_BACKUP_DIRNAME
-        self._backup_root = (backup_root if backup_root is not None else default_root).resolve()
+        self._backup_root = (
+            backup_root if backup_root is not None else default_root
+        ).resolve()
         self._proposals: dict[str, Proposal] = {}
         self._judge = judge
 
@@ -95,19 +106,23 @@ class ProposalManager:
         return target
 
     def propose(self, changes: Mapping[str, str]) -> Proposal:
-        """Stage a change set, run pre-flight checks and the judge. Nothing is written."""
+        """Stage a change set, auto-format Python, run pre-flight checks and the judge.
+
+        Nothing is written to the workspace.
+        """
         if not changes:
             raise ProposalError("a proposal needs at least one change")
         targets = [self._target(raw) for raw in changes]
         if len(set(targets)) != len(targets):
             raise ProposalError("two changes resolve to the same file")
         try:
-            report = run_preflight(changes)
+            formatted = autoformat_python(changes)
+            report = run_preflight(formatted)
         except PreflightInputError as exc:
             raise ProposalError(str(exc)) from exc
         proposal = Proposal(
             proposal_id=uuid.uuid4().hex,
-            changes=dict(changes),
+            changes=dict(formatted),
             report=report,
             status=ProposalStatus.PENDING,
             created_at=datetime.now(UTC),
@@ -132,7 +147,9 @@ class ProposalManager:
         except KeyError:
             raise ProposalError(f"unknown proposal: {proposal_id}") from None
 
-    def _decide(self, proposal_id: str, decided_by: str, status: ProposalStatus) -> Proposal:
+    def _decide(
+        self, proposal_id: str, decided_by: str, status: ProposalStatus
+    ) -> Proposal:
         proposal = self.get(proposal_id)
         approver = decided_by.strip()
         if not approver:

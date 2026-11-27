@@ -35,7 +35,11 @@ DEFAULT_OLLAMA_MODEL: Final[str] = "qwen2.5-coder:7b"
 DEFAULT_OLLAMA_URL: Final[str] = "http://127.0.0.1:11434/api/generate"
 # provider name -> (base URL, environment variable holding the key, default model)
 OPENAI_COMPATIBLE: Final[dict[str, tuple[str, str, str]]] = {
-    "groq": ("https://api.groq.com/openai/v1", "GROQ_API_KEY", "llama-3.3-70b-versatile"),
+    "groq": (
+        "https://api.groq.com/openai/v1",
+        "GROQ_API_KEY",
+        "llama-3.3-70b-versatile",
+    ),
     "mistral": ("https://api.mistral.ai/v1", "MISTRAL_API_KEY", "mistral-small-latest"),
     "gemini": (
         "https://generativelanguage.googleapis.com/v1beta/openai",
@@ -168,8 +172,15 @@ class _Rule:
 _RULES: Final[tuple[_Rule, ...]] = (
     _Rule("security", re.compile(r"\beval\s*\("), "eval() runs arbitrary code", "high"),
     _Rule("security", re.compile(r"\bexec\s*\("), "exec() runs arbitrary code", "high"),
-    _Rule("security", re.compile(r"\bos\.system\s*\("), "os.system() runs a shell", "high"),
-    _Rule("security", re.compile(r"shell\s*=\s*True"), "subprocess with shell=True", "high"),
+    _Rule(
+        "security", re.compile(r"\bos\.system\s*\("), "os.system() runs a shell", "high"
+    ),
+    _Rule(
+        "security",
+        re.compile(r"shell\s*=\s*True"),
+        "subprocess with shell=True",
+        "high",
+    ),
     _Rule(
         "path traversal",
         re.compile(r"(?:^|[\s\"'/\\])\.\.(?:[/\\]|$)", re.MULTILINE),
@@ -200,7 +211,12 @@ _RULES: Final[tuple[_Rule, ...]] = (
         "yaml.load without an explicit safe Loader",
         "medium",
     ),
-    _Rule("unintended side-effects", re.compile(r"\bsubprocess\."), "spawns a subprocess", "medium"),
+    _Rule(
+        "unintended side-effects",
+        re.compile(r"\bsubprocess\."),
+        "spawns a subprocess",
+        "medium",
+    ),
 )
 
 
@@ -381,5 +397,7 @@ def select_judge_provider(
         key = settings.get(key_name, "").strip()
         if not key:
             raise JudgeConfigError(f"judge provider {kind} needs {key_name} to be set")
-        return OpenAICompatibleProvider(kind, base_url, key, model or default_model, transport)
+        return OpenAICompatibleProvider(
+            kind, base_url, key, model or default_model, transport
+        )
     raise JudgeConfigError(f"unknown judge provider: {kind!r}")

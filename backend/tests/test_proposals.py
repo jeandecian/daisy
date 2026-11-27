@@ -4,7 +4,6 @@ import importlib.util
 from pathlib import Path
 
 import pytest
-
 from daisy.backup import rollback_snapshot
 from daisy.proposals import (
     ApprovalRequiredError,
@@ -15,7 +14,8 @@ from daisy.proposals import (
 )
 
 requires_tools = pytest.mark.skipif(
-    importlib.util.find_spec("ruff") is None or importlib.util.find_spec("mypy") is None,
+    importlib.util.find_spec("ruff") is None
+    or importlib.util.find_spec("mypy") is None,
     reason="ruff and mypy are dev dependencies",
 )
 
@@ -82,6 +82,28 @@ def test_approve_then_apply_writes_content_and_snapshots(workspace: Path) -> Non
     assert (workspace / "mod.py").read_text(encoding="utf-8") == "old = 0\n"
 
 
+@requires_tools
+def test_propose_auto_formats_python_before_preflight(workspace: Path) -> None:
+    manager = ProposalManager(workspace)
+
+    proposal = manager.propose({"loose.py": "x=1\n"})
+
+    assert proposal.changes == {"loose.py": "x = 1\n"}
+    assert proposal.report.passed is True
+    assert proposal.report.check("ruff_format").passed is True
+
+
+@requires_tools
+def test_apply_writes_the_formatted_content(workspace: Path) -> None:
+    manager = ProposalManager(workspace)
+    proposal = manager.propose({"loose.py": "x=1\n"})
+    manager.approve(proposal.proposal_id, "jean")
+
+    manager.apply(proposal.proposal_id)
+
+    assert (workspace / "loose.py").read_text(encoding="utf-8") == "x = 1\n"
+
+
 def test_non_python_change_applies_after_approval(workspace: Path) -> None:
     manager = ProposalManager(workspace)
     proposal = manager.propose({"notes/todo.txt": "hello\n"})
@@ -131,7 +153,9 @@ def test_apply_twice_is_refused(workspace: Path) -> None:
         manager.apply(proposal.proposal_id)
 
 
-def test_propose_rejects_path_escaping_workspace(tmp_path: Path, workspace: Path) -> None:
+def test_propose_rejects_path_escaping_workspace(
+    tmp_path: Path, workspace: Path
+) -> None:
     manager = ProposalManager(workspace)
 
     with pytest.raises(ProposalError, match="stay inside the workspace"):

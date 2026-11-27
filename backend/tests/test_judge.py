@@ -2,12 +2,11 @@
 
 import importlib.util
 import json
+from collections.abc import Mapping
 from pathlib import Path
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-
 from daisy.judge import (
     MAX_FILE_CHARS,
     SYSTEM_PROMPT,
@@ -24,6 +23,7 @@ from daisy.judge import (
 )
 from daisy.main import create_app
 from daisy.proposals import ProposalError, ProposalManager, ProposalStatus
+from fastapi.testclient import TestClient
 
 TOKEN = "test-secret"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -35,7 +35,8 @@ APPROVED_JSON = {
     "summary": "No concern found.",
 }
 requires_tools = pytest.mark.skipif(
-    importlib.util.find_spec("ruff") is None or importlib.util.find_spec("mypy") is None,
+    importlib.util.find_spec("ruff") is None
+    or importlib.util.find_spec("mypy") is None,
     reason="ruff and mypy are dev dependencies",
 )
 
@@ -59,7 +60,7 @@ class FakeJudge:
         self.verdict = verdict
         self.calls = 0
 
-    def audit(self, changes: dict[str, str]) -> JudgeVerdict:
+    def audit(self, changes: Mapping[str, str]) -> JudgeVerdict:
         self.calls += 1
         return make_verdict(self.verdict)
 
@@ -151,7 +152,9 @@ def test_heuristic_rejects_path_traversal() -> None:
 
 
 def test_heuristic_rejects_recursive_delete() -> None:
-    verdict = HeuristicProvider().audit({"a.py": "import shutil\nshutil.rmtree('data')\n"})
+    verdict = HeuristicProvider().audit(
+        {"a.py": "import shutil\nshutil.rmtree('data')\n"}
+    )
     assert verdict.verdict == "REJECTED"
 
 
@@ -189,7 +192,9 @@ def test_openai_compatible_provider_sends_key_and_parses_verdict() -> None:
         seen["url"] = str(request.url)
         seen["body"] = json.loads(request.content)
         content = json.dumps({**APPROVED_JSON, "verdict": "REJECTED"})
-        return httpx.Response(200, json={"choices": [{"message": {"content": content}}]})
+        return httpx.Response(
+            200, json={"choices": [{"message": {"content": content}}]}
+        )
 
     provider = OpenAICompatibleProvider(
         "groq",
@@ -213,7 +218,9 @@ def test_ollama_provider_requests_json_and_parses_verdict() -> None:
         seen["body"] = json.loads(request.content)
         return httpx.Response(200, json={"response": json.dumps(APPROVED_JSON)})
 
-    provider = OllamaProvider("qwen", "http://127.0.0.1:1/api/generate", httpx.MockTransport(handler))
+    provider = OllamaProvider(
+        "qwen", "http://127.0.0.1:1/api/generate", httpx.MockTransport(handler)
+    )
     verdict = provider.audit({"a.py": CLEAN})
     assert verdict.verdict == "APPROVED"
     assert verdict.provider == "ollama"
@@ -237,7 +244,9 @@ def test_http_error_becomes_warning_not_approval() -> None:
 
 
 def test_transport_error_becomes_warning() -> None:
-    provider = OllamaProvider("qwen", "http://127.0.0.1:1/api/generate", failing_transport())
+    provider = OllamaProvider(
+        "qwen", "http://127.0.0.1:1/api/generate", failing_transport()
+    )
     verdict = provider.audit({"a.py": CLEAN})
     assert verdict.verdict == "WARNING"
     assert any("judge unavailable" in risk for risk in verdict.risks)
@@ -247,7 +256,9 @@ def test_invalid_model_output_becomes_warning() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"response": "sure, looks fine!"})
 
-    provider = OllamaProvider("qwen", "http://127.0.0.1:1/api/generate", httpx.MockTransport(handler))
+    provider = OllamaProvider(
+        "qwen", "http://127.0.0.1:1/api/generate", httpx.MockTransport(handler)
+    )
     assert provider.audit({"a.py": CLEAN}).verdict == "WARNING"
 
 
@@ -274,7 +285,9 @@ def test_select_cloud_provider_requires_its_key() -> None:
 
 
 def test_select_cloud_provider_with_key() -> None:
-    provider = select_judge_provider({"DAISY_JUDGE_PROVIDER": "groq", "GROQ_API_KEY": "k"})
+    provider = select_judge_provider(
+        {"DAISY_JUDGE_PROVIDER": "groq", "GROQ_API_KEY": "k"}
+    )
     assert provider.name == "groq"
 
 
@@ -308,7 +321,9 @@ def test_propose_without_judge_leaves_verdict_empty(tmp_path: Path) -> None:
 
 @requires_tools
 def test_judge_outage_does_not_block_proposal(tmp_path: Path) -> None:
-    judge = OllamaProvider("qwen", "http://127.0.0.1:1/api/generate", failing_transport())
+    judge = OllamaProvider(
+        "qwen", "http://127.0.0.1:1/api/generate", failing_transport()
+    )
     proposal = ProposalManager(tmp_path, judge=judge).propose({"pkg/clean.py": CLEAN})
     assert proposal.status is ProposalStatus.PENDING
     assert proposal.judge_verdict is not None
@@ -383,13 +398,17 @@ def test_judge_endpoint_returns_structured_verdict(tmp_path: Path) -> None:
 
 def test_judge_endpoint_unknown_id_is_404(tmp_path: Path) -> None:
     client = TestClient(
-        create_app(TOKEN, db_path=tmp_path / "daisy.db", workspace=tmp_path, judge=FakeJudge())
+        create_app(
+            TOKEN, db_path=tmp_path / "daisy.db", workspace=tmp_path, judge=FakeJudge()
+        )
     )
     assert client.post("/proposals/missing/judge", headers=AUTH).status_code == 404
 
 
 def test_judge_endpoint_requires_bearer_token(tmp_path: Path) -> None:
     client = TestClient(
-        create_app(TOKEN, db_path=tmp_path / "daisy.db", workspace=tmp_path, judge=FakeJudge())
+        create_app(
+            TOKEN, db_path=tmp_path / "daisy.db", workspace=tmp_path, judge=FakeJudge()
+        )
     )
     assert client.post("/proposals/anything/judge").status_code == 401

@@ -4,12 +4,11 @@ from pathlib import Path
 
 import httpx
 import pytest
-from fastapi.testclient import TestClient
-from pydantic import ValidationError
-
 from daisy.client import iter_sse
 from daisy.main import create_app
 from daisy.schema import DEFAULT_MODEL, ChatRequest
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 TOKEN = "test-secret"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -54,7 +53,13 @@ def test_chat_stream_relays_tokens_and_status(db_path: Path) -> None:
     response = client.post("/chat/stream", json={"message": "hi"}, headers=AUTH)
     assert response.status_code == 200
     events = list(iter_sse(response.text.splitlines()))
-    assert [name for name, _ in events] == ["status", "status", "token", "token", "status"]
+    assert [name for name, _ in events] == [
+        "status",
+        "status",
+        "token",
+        "token",
+        "status",
+    ]
     assert events[2][1] == '{"content":"Hel"}'
     assert events[3][1] == '{"content":"lo"}'
 

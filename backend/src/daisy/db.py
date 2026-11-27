@@ -1,7 +1,7 @@
 """Minimal SQLite persistence for chat messages (standard library only)."""
 
 import sqlite3
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
@@ -60,7 +60,7 @@ def save_message(
     if role not in VALID_ROLES:
         raise ValueError(f"invalid role: {role!r}")
     path = init_db(db_path)
-    created_at = datetime.now(timezone.utc).isoformat()
+    created_at = datetime.now(UTC).isoformat()
     conn = _connect(path)
     try:
         with conn:

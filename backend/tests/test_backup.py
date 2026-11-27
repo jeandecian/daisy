@@ -7,20 +7,19 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-
 from daisy.backup import (
     METADATA_FILENAME,
     SNAPSHOT_ID_PATTERN,
     SnapshotError,
     SnapshotIntegrityError,
     create_snapshot,
-    list_snapshots,
     latest_snapshot_id,
+    list_snapshots,
     rollback_snapshot,
     sha256_file,
 )
 from daisy.main import create_app, health_payload
+from fastapi.testclient import TestClient
 
 
 @pytest.fixture
@@ -47,7 +46,9 @@ def _write(path: Path, text: str) -> Path:
 def test_snapshot_records_metadata_and_copies(workspace: Path, store: Path) -> None:
     target = _write(workspace / "notes.txt", "original")
 
-    metadata = create_snapshot([target], action_id="act-1", root=store, workspace=workspace)
+    metadata = create_snapshot(
+        [target], action_id="act-1", root=store, workspace=workspace
+    )
 
     assert SNAPSHOT_ID_PATTERN.fullmatch(metadata.snapshot_id)
     assert metadata.snapshot_id.endswith("_act-1")
@@ -70,7 +71,9 @@ def test_snapshot_records_metadata_and_copies(workspace: Path, store: Path) -> N
 def test_missing_file_is_recorded_as_not_existed(workspace: Path, store: Path) -> None:
     absent = workspace / "new.txt"
 
-    metadata = create_snapshot([absent], action_id="act-2", root=store, workspace=workspace)
+    metadata = create_snapshot(
+        [absent], action_id="act-2", root=store, workspace=workspace
+    )
 
     entry = metadata.files[0]
     assert entry.existed is False
@@ -80,7 +83,9 @@ def test_missing_file_is_recorded_as_not_existed(workspace: Path, store: Path) -
 def test_duplicate_paths_are_recorded_once(workspace: Path, store: Path) -> None:
     target = _write(workspace / "a.txt", "x")
 
-    metadata = create_snapshot([target, target], action_id="act-3", root=store, workspace=workspace)
+    metadata = create_snapshot(
+        [target, target], action_id="act-3", root=store, workspace=workspace
+    )
 
     assert len(metadata.files) == 1
 
@@ -102,17 +107,26 @@ def test_empty_file_list_is_rejected(workspace: Path, store: Path) -> None:
 
 def test_list_returns_snapshots_newest_first(workspace: Path, store: Path) -> None:
     target = _write(workspace / "a.txt", "x")
-    first = create_snapshot([target], action_id="first", root=store, workspace=workspace)
+    first = create_snapshot(
+        [target], action_id="first", root=store, workspace=workspace
+    )
     time.sleep(0.01)
-    second = create_snapshot([target], action_id="second", root=store, workspace=workspace)
+    second = create_snapshot(
+        [target], action_id="second", root=store, workspace=workspace
+    )
 
     listing = list_snapshots(store, workspace)
 
-    assert [item.snapshot_id for item in listing] == [second.snapshot_id, first.snapshot_id]
+    assert [item.snapshot_id for item in listing] == [
+        second.snapshot_id,
+        first.snapshot_id,
+    ]
     assert latest_snapshot_id(store, workspace) == second.snapshot_id
 
 
-def test_list_skips_unrelated_and_corrupt_directories(workspace: Path, store: Path) -> None:
+def test_list_skips_unrelated_and_corrupt_directories(
+    workspace: Path, store: Path
+) -> None:
     target = _write(workspace / "a.txt", "x")
     good = create_snapshot([target], action_id="good", root=store, workspace=workspace)
     (store / "not-a-snapshot").mkdir()
@@ -132,7 +146,9 @@ def test_latest_is_none_when_store_is_empty(workspace: Path, store: Path) -> Non
 # Path safety
 
 
-def test_rejects_path_outside_workspace(tmp_path: Path, workspace: Path, store: Path) -> None:
+def test_rejects_path_outside_workspace(
+    tmp_path: Path, workspace: Path, store: Path
+) -> None:
     outside = _write(tmp_path / "outside.txt", "secret")
 
     with pytest.raises(SnapshotError, match="outside the workspace"):
@@ -146,14 +162,18 @@ def test_rejects_parent_traversal_out_of_workspace(
     traversal = workspace / ".." / "outside.txt"
 
     with pytest.raises(SnapshotError, match="outside the workspace"):
-        create_snapshot([traversal], action_id="act-trav", root=store, workspace=workspace)
+        create_snapshot(
+            [traversal], action_id="act-trav", root=store, workspace=workspace
+        )
 
 
 def test_rejects_targets_inside_backup_store(workspace: Path, store: Path) -> None:
     inside = _write(store / "x.txt", "meta")
 
     with pytest.raises(SnapshotError, match="backup store"):
-        create_snapshot([inside], action_id="act-store", root=store, workspace=workspace)
+        create_snapshot(
+            [inside], action_id="act-store", root=store, workspace=workspace
+        )
 
 
 def test_rejects_directory_target(workspace: Path, store: Path) -> None:
@@ -168,7 +188,9 @@ def test_rollback_rejects_tampered_metadata_path(
     tmp_path: Path, workspace: Path, store: Path
 ) -> None:
     target = _write(workspace / "a.txt", "original")
-    metadata = create_snapshot([target], action_id="act-tamper", root=store, workspace=workspace)
+    metadata = create_snapshot(
+        [target], action_id="act-tamper", root=store, workspace=workspace
+    )
     outside = _write(tmp_path / "outside.txt", "keep me")
     meta_path = store / metadata.snapshot_id / METADATA_FILENAME
     data = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -186,7 +208,9 @@ def test_rollback_rejects_tampered_metadata_path(
 
 def test_rollback_restores_original_content(workspace: Path, store: Path) -> None:
     target = _write(workspace / "a.txt", "original")
-    metadata = create_snapshot([target], action_id="act-r1", root=store, workspace=workspace)
+    metadata = create_snapshot(
+        [target], action_id="act-r1", root=store, workspace=workspace
+    )
     target.write_text("changed by a bad edit", encoding="utf-8")
 
     restored = rollback_snapshot(metadata.snapshot_id, store, workspace)
@@ -195,9 +219,13 @@ def test_rollback_restores_original_content(workspace: Path, store: Path) -> Non
     assert target.read_text(encoding="utf-8") == "original"
 
 
-def test_rollback_removes_file_created_after_snapshot(workspace: Path, store: Path) -> None:
+def test_rollback_removes_file_created_after_snapshot(
+    workspace: Path, store: Path
+) -> None:
     created = workspace / "new.txt"
-    metadata = create_snapshot([created], action_id="act-r2", root=store, workspace=workspace)
+    metadata = create_snapshot(
+        [created], action_id="act-r2", root=store, workspace=workspace
+    )
     created.write_text("written later", encoding="utf-8")
 
     rollback_snapshot(metadata.snapshot_id, store, workspace)
@@ -214,7 +242,9 @@ def test_rollback_detects_tampered_backup_and_changes_nothing(
         [first, second], action_id="act-r3", root=store, workspace=workspace
     )
     first.write_text("edited after snapshot", encoding="utf-8")
-    (store / metadata.snapshot_id / "0001.bak").write_text("corrupted", encoding="utf-8")
+    (store / metadata.snapshot_id / "0001.bak").write_text(
+        "corrupted", encoding="utf-8"
+    )
 
     with pytest.raises(SnapshotIntegrityError, match="checksum mismatch"):
         rollback_snapshot(metadata.snapshot_id, store, workspace)
@@ -254,4 +284,6 @@ def test_health_endpoint_returns_200_with_utc_timestamp(tmp_path: Path) -> None:
     assert body["status"] == "ok"
     parsed = datetime.fromisoformat(body["timestamp"])
     assert parsed.utcoffset() == UTC.utcoffset(None)
-    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?\+00:00", body["timestamp"])
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?\+00:00", body["timestamp"]
+    )

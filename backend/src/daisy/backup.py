@@ -112,7 +112,9 @@ def _load_metadata(snapshot_dir: Path) -> SnapshotMetadata:
             (snapshot_dir / METADATA_FILENAME).read_text(encoding="utf-8")
         )
     except (OSError, ValueError) as exc:
-        raise SnapshotError(f"unreadable snapshot metadata in {snapshot_dir.name}") from exc
+        raise SnapshotError(
+            f"unreadable snapshot metadata in {snapshot_dir.name}"
+        ) from exc
 
 
 def create_snapshot(
@@ -247,7 +249,9 @@ def rollback_snapshot(
         if entry.existed:
             source = snapshot_dir / entry.backup_name
             if not source.is_file() or sha256_file(source) != entry.sha256:
-                raise SnapshotIntegrityError(f"checksum mismatch for {entry.original_path}")
+                raise SnapshotIntegrityError(
+                    f"checksum mismatch for {entry.original_path}"
+                )
         plan.append((entry, target))
 
     for entry, target in plan:
@@ -262,15 +266,24 @@ def rollback_snapshot(
 
 def main(argv: list[str] | None = None) -> int:
     """Run the snapshot command line. Returns the process exit code."""
-    parser = argparse.ArgumentParser(prog="daisy.backup", description="Snapshot and rollback.")
-    parser.add_argument("--root", type=Path, default=None, help="Snapshot store directory.")
+    parser = argparse.ArgumentParser(
+        prog="daisy.backup", description="Snapshot and rollback."
+    )
     parser.add_argument(
-        "--workspace", type=Path, default=None, help="Root that all target paths must be inside."
+        "--root", type=Path, default=None, help="Snapshot store directory."
+    )
+    parser.add_argument(
+        "--workspace",
+        type=Path,
+        default=None,
+        help="Root that all target paths must be inside.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
     create = commands.add_parser("create", help="Snapshot the given files.")
-    create.add_argument("--action-id", default=None, help="Identifier stored in the snapshot.")
+    create.add_argument(
+        "--action-id", default=None, help="Identifier stored in the snapshot."
+    )
     create.add_argument("files", nargs="+", type=Path)
 
     rollback = commands.add_parser("rollback", help="Restore a snapshot.")
@@ -281,7 +294,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.command == "create":
-            metadata = create_snapshot(args.files, args.action_id, args.root, args.workspace)
+            metadata = create_snapshot(
+                args.files, args.action_id, args.root, args.workspace
+            )
             print(metadata.snapshot_id, flush=True)
             return 0
         if args.command == "rollback":
@@ -297,7 +312,8 @@ def main(argv: list[str] | None = None) -> int:
             print(target_id, flush=True)
             return 0
         listing = [
-            item.model_dump(mode="json") for item in list_snapshots(args.root, args.workspace)
+            item.model_dump(mode="json")
+            for item in list_snapshots(args.root, args.workspace)
         ]
         print(json.dumps(listing, indent=2), flush=True)
         return 0

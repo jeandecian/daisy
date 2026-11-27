@@ -1,8 +1,10 @@
 """Pre-flight verification for proposed Python changes.
 
-Proposed files are written to a temporary directory that mirrors their relative paths,
-then checked with ``ruff check``, ``ruff format --check`` and ``mypy``. The workspace is
-never touched. Only ``.py`` files are checked; other files pass through with no checks.
+Proposed Python files are first auto-formatted with ``ruff format`` (see ``autoformat_python``),
+so the content that is checked and later applied is the formatted content. The formatted files
+are then written to a temporary directory that mirrors their relative paths and checked with
+``ruff check``, ``ruff format --check`` and ``mypy``. The workspace is never touched. Only ``.py``
+files are formatted and checked; other files pass through with no checks.
 
 Each tool runs as ``python -m <tool>`` with the interpreter that runs the sidecar, so the
 checks use the same pinned versions as the dev dependency group.
@@ -22,7 +24,9 @@ PYTHON_SUFFIX: Final[str] = ".py"
 RUFF_LOCATION_PATTERN: Final[re.Pattern[str]] = re.compile(r"^.+:\d+:\d+: ")
 # Ruff's wording has varied across versions ("Would reformat: x.py", "1 file would be
 # reformatted"), so match the phrase anywhere on the line, case-insensitively.
-RUFF_REFORMAT_PATTERN: Final[re.Pattern[str]] = re.compile(r"would reformat", re.IGNORECASE)
+RUFF_REFORMAT_PATTERN: Final[re.Pattern[str]] = re.compile(
+    r"would reformat", re.IGNORECASE
+)
 MYPY_ERROR_MARKER: Final[str] = ": error:"
 MYPY_WARNING_MARKER: Final[str] = ": warning:"
 
@@ -204,20 +208,65 @@ def _mypy(root: Path, files: list[str]) -> CheckResult:
     )
 
 
-def run_preflight(changes: Mapping[str, str]) -> PreflightReport:
-    """Check a set of proposed files without writing to the workspace.
-
-    ``changes`` maps workspace-relative paths to their full proposed content. Raises
-    ``PreflightInputError`` for an empty set or an unsafe path. When no ``.py`` files are
-    proposed, the report passes with no checks run.
-    """
-    if not changes:
-        raise PreflightInputError("no changes to check")
+def _python_paths(changes: Mapping[str, str]) -> dict[PurePosixPath, str]:
+    """Validate every path and return the Python files keyed by their clean relative path."""
     python_files: dict[PurePosixPath, str] = {}
     for raw, content in changes.items():
         rel = validate_relpath(raw)
         if rel.suffix == PYTHON_SUFFIX:
             python_files[rel] = content
+    return python_files
+
+
+def autoformat_python(changes: Mapping[str, str]) -> dict[str, str]:
+    """Return the change set with every proposed ``.py`` file formatted by ``ruff format``.
+
+    Non-Python files are returned unchanged. The formatting runs in a temporary directory, so
+    the workspace is never touched. If ``ruff format`` cannot run, times out, or fails (for
+    example on a syntax error), the original content is kept and the pre-flight checks report
+    the problem. Raises ``PreflightInputError`` for an unsafe path.
+    """
+    result = dict(changes)
+    python_files = _python_paths(changes)
+    if not python_files:
+        return result
+    with tempfile.TemporaryDirectory(prefix="daisy-autoformat-") as tmp:
+        root = Path(tmp)
+        for rel, content in python_files.items():
+            target = root / rel
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content.encode("utf-8"))
+        files = [rel.as_posix() for rel in python_files]
+        command = [
+            sys.executable,
+            "-m",
+            "ruff",
+            "format",
+            "--isolated",
+            "--no-cache",
+            *files,
+        ]
+        code, _out, _err, failure = _run_tool("ruff format", command, root)
+        if failure is not None or code != 0:
+            return result
+        for raw in changes:
+            rel = validate_relpath(raw)
+            if rel.suffix == PYTHON_SUFFIX:
+                result[raw] = (root / rel).read_bytes().decode("utf-8")
+    return result
+
+
+def run_preflight(changes: Mapping[str, str]) -> PreflightReport:
+    """Check a set of proposed files without writing to the workspace.
+
+    ``changes`` maps workspace-relative paths to their full proposed content. Raises
+    ``PreflightInputError`` for an empty set or an unsafe path. When no ``.py`` files are
+    proposed, the report passes with no checks run. Call ``autoformat_python`` first to check
+    the formatted content.
+    """
+    if not changes:
+        raise PreflightInputError("no changes to check")
+    python_files = _python_paths(changes)
     if not python_files:
         return PreflightReport(passed=True, checks=())
     with tempfile.TemporaryDirectory(prefix="daisy-preflight-") as tmp:

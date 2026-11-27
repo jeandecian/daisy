@@ -17,8 +17,8 @@ from typing import Final
 import httpx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
@@ -111,42 +111,48 @@ async def stream_ollama_chat(
     }
     parts: list[str] = []
     try:
-        async with httpx.AsyncClient(transport=transport, timeout=OLLAMA_TIMEOUT) as client:
-            async with client.stream("POST", OLLAMA_CHAT_URL, json=payload) as response:
-                if response.status_code != 200:
-                    body = (await response.aread()).decode(errors="replace")
-                    body = body[:MAX_ERROR_BODY_CHARS]
-                    yield error_event(f"Ollama returned HTTP {response.status_code}: {body}")
+        async with (
+            httpx.AsyncClient(transport=transport, timeout=OLLAMA_TIMEOUT) as client,
+            client.stream("POST", OLLAMA_CHAT_URL, json=payload) as response,
+        ):
+            if response.status_code != 200:
+                body = (await response.aread()).decode(errors="replace")
+                body = body[:MAX_ERROR_BODY_CHARS]
+                yield error_event(
+                    f"Ollama returned HTTP {response.status_code}: {body}"
+                )
+                return
+            yield status_event("streaming")
+            finished = False
+            async for line in response.aiter_lines():
+                if not line.strip():
+                    continue
+                try:
+                    chunk = json.loads(line)
+                except json.JSONDecodeError:
+                    yield error_event("Ollama sent invalid JSON")
                     return
-                yield status_event("streaming")
-                finished = False
-                async for line in response.aiter_lines():
-                    if not line.strip():
-                        continue
-                    try:
-                        chunk = json.loads(line)
-                    except json.JSONDecodeError:
-                        yield error_event("Ollama sent invalid JSON")
-                        return
-                    if not isinstance(chunk, dict):
-                        yield error_event("Ollama sent an unexpected payload")
-                        return
-                    if "error" in chunk:
-                        yield error_event(f"Ollama error: {chunk['error']}")
-                        return
-                    message = chunk.get("message")
-                    content = message.get("content") if isinstance(message, dict) else None
-                    if isinstance(content, str) and content:
-                        parts.append(content)
-                        yield token_event(content)
-                    if chunk.get("done") is True:
-                        finished = True
-                        break
-                if finished:
-                    save_message("assistant", "".join(parts), model=request.model, db_path=db_path)
-                    yield status_event("done")
-                else:
-                    yield error_event("Ollama stream ended before completion")
+                if not isinstance(chunk, dict):
+                    yield error_event("Ollama sent an unexpected payload")
+                    return
+                if "error" in chunk:
+                    yield error_event(f"Ollama error: {chunk['error']}")
+                    return
+                message = chunk.get("message")
+                content = message.get("content") if isinstance(message, dict) else None
+                if isinstance(content, str) and content:
+                    parts.append(content)
+                    yield token_event(content)
+                if chunk.get("done") is True:
+                    finished = True
+                    break
+            if finished:
+                save_message(
+                    "assistant", "".join(parts), model=request.model, db_path=db_path
+                )
+                yield status_event("done")
+            else:
+                yield error_event("Ollama stream ended before completion")
     except httpx.ConnectError:
         yield error_event("Could not connect to Ollama at 127.0.0.1:11434")
     except httpx.HTTPError as exc:
@@ -239,7 +245,9 @@ def create_app(
     ``judge`` defaults to the provider named by DAISY_JUDGE_PROVIDER (heuristic if unset).
     """
     resolved_db = init_db(db_path or DEFAULT_DB_PATH)
-    resolved_workspace = (workspace if workspace is not None else DEFAULT_WORKSPACE).resolve()
+    resolved_workspace = (
+        workspace if workspace is not None else DEFAULT_WORKSPACE
+    ).resolve()
     resolved_judge = judge if judge is not None else select_judge_provider()
     app = FastAPI(title=SERVICE_NAME, docs_url=None, redoc_url=None, openapi_url=None)
     app.state.proposals = ProposalManager(resolved_workspace, judge=resolved_judge)
@@ -304,7 +312,9 @@ def create_app(
         return _proposal_json(proposal)
 
     @app.post("/proposals/{proposal_id}/approve")
-    def approve(proposal_id: str, body: DecisionRequest, request: Request) -> dict[str, object]:
+    def approve(
+        proposal_id: str, body: DecisionRequest, request: Request
+    ) -> dict[str, object]:
         manager: ProposalManager = request.app.state.proposals
         _find_proposal(manager, proposal_id)
         try:
@@ -314,7 +324,9 @@ def create_app(
         return _proposal_json(proposal)
 
     @app.post("/proposals/{proposal_id}/reject")
-    def reject(proposal_id: str, body: DecisionRequest, request: Request) -> dict[str, object]:
+    def reject(
+        proposal_id: str, body: DecisionRequest, request: Request
+    ) -> dict[str, object]:
         manager: ProposalManager = request.app.state.proposals
         _find_proposal(manager, proposal_id)
         try:
@@ -357,7 +369,9 @@ def create_app(
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments for the sidecar."""
-    parser = argparse.ArgumentParser(prog=SERVICE_NAME, description="Daisy Python sidecar.")
+    parser = argparse.ArgumentParser(
+        prog=SERVICE_NAME, description="Daisy Python sidecar."
+    )
     parser.add_argument(
         "--auth-token",
         required=True,

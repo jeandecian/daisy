@@ -4,17 +4,17 @@ import importlib.util
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-
 from daisy.extensions import EXTENSIONS_DIRNAME
 from daisy.main import create_app
+from fastapi.testclient import TestClient
 
 TOKEN = "test-token"
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
 UNKNOWN_ID = "0" * 32
 
 requires_tools = pytest.mark.skipif(
-    importlib.util.find_spec("ruff") is None or importlib.util.find_spec("mypy") is None,
+    importlib.util.find_spec("ruff") is None
+    or importlib.util.find_spec("mypy") is None,
     reason="ruff and mypy are dev dependencies",
 )
 
@@ -36,7 +36,9 @@ def client(tmp_path: Path, workspace: Path) -> TestClient:
 
 
 def _propose(client: TestClient, changes: dict[str, str]) -> dict[str, object]:
-    response = client.post("/proposals/propose", json={"changes": changes}, headers=AUTH)
+    response = client.post(
+        "/proposals/propose", json={"changes": changes}, headers=AUTH
+    )
     assert response.status_code == 200
     return response.json()
 
@@ -47,7 +49,9 @@ def test_requests_without_token_are_rejected(client: TestClient) -> None:
     assert response.status_code == 401
 
 
-def test_propose_returns_pending_with_report(client: TestClient, workspace: Path) -> None:
+def test_propose_returns_pending_with_report(
+    client: TestClient, workspace: Path
+) -> None:
     body = _propose(client, {"notes.txt": "hello\n"})
 
     assert body["status"] == "pending"
@@ -97,7 +101,9 @@ def test_apply_before_approval_is_refused(client: TestClient, workspace: Path) -
     assert not (workspace / "notes.txt").exists()
 
 
-def test_rejected_proposal_cannot_be_applied(client: TestClient, workspace: Path) -> None:
+def test_rejected_proposal_cannot_be_applied(
+    client: TestClient, workspace: Path
+) -> None:
     proposal_id = _propose(client, {"notes.txt": "hello\n"})["proposal_id"]
 
     rejected = client.post(
