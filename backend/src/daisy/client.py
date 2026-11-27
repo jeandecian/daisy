@@ -33,8 +33,7 @@ def iter_sse(lines: Iterable[str]) -> Iterator[tuple[str, str]]:
         if line.startswith(":"):
             continue
         field, _, value = line.partition(":")
-        if value.startswith(" "):
-            value = value[1:]
+        value = value.removeprefix(" ")
         if field == "event":
             event = value
         elif field == "data":
@@ -67,29 +66,31 @@ def run(args: argparse.Namespace) -> int:
     printed_tokens = False
     try:
         request = ChatRequest(message=args.message, model=args.model)
-        with httpx.Client(timeout=httpx.Timeout(10.0, read=300.0)) as client:
-            with client.stream(
+        with (
+            httpx.Client(timeout=httpx.Timeout(10.0, read=300.0)) as client,
+            client.stream(
                 "POST", url, json=request.model_dump(), headers=headers
-            ) as response:
-                if response.status_code != 200:
-                    body = response.read().decode(errors="replace")
-                    print(f"error: HTTP {response.status_code}: {body}", file=sys.stderr)
+            ) as response,
+        ):
+            if response.status_code != 200:
+                body = response.read().decode(errors="replace")
+                print(f"error: HTTP {response.status_code}: {body}", file=sys.stderr)
+                return EXIT_FAILURE
+            for name, data in iter_sse(response.iter_lines()):
+                if name == "token":
+                    sys.stdout.write(TokenData.model_validate_json(data).content)
+                    sys.stdout.flush()
+                    printed_tokens = True
+                elif name == "status":
+                    status = StatusData.model_validate_json(data).message
+                    print(f"[status] {status}", file=sys.stderr)
+                elif name == "error":
+                    message = ErrorData.model_validate_json(data).message
+                    print(f"error: {message}", file=sys.stderr)
                     return EXIT_FAILURE
-                for name, data in iter_sse(response.iter_lines()):
-                    if name == "token":
-                        sys.stdout.write(TokenData.model_validate_json(data).content)
-                        sys.stdout.flush()
-                        printed_tokens = True
-                    elif name == "status":
-                        status = StatusData.model_validate_json(data).message
-                        print(f"[status] {status}", file=sys.stderr)
-                    elif name == "error":
-                        message = ErrorData.model_validate_json(data).message
-                        print(f"error: {message}", file=sys.stderr)
-                        return EXIT_FAILURE
-                    else:
-                        print(f"error: unexpected event '{name}'", file=sys.stderr)
-                        return EXIT_FAILURE
+                else:
+                    print(f"error: unexpected event '{name}'", file=sys.stderr)
+                    return EXIT_FAILURE
     except ValidationError as exc:
         print(f"error: invalid request or event: {exc}", file=sys.stderr)
         return EXIT_FAILURE
