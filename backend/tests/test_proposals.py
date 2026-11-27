@@ -82,6 +82,28 @@ def test_approve_then_apply_writes_content_and_snapshots(workspace: Path) -> Non
     assert (workspace / "mod.py").read_text(encoding="utf-8") == "old = 0\n"
 
 
+@requires_tools
+def test_propose_auto_formats_python_before_preflight(workspace: Path) -> None:
+    manager = ProposalManager(workspace)
+
+    proposal = manager.propose({"loose.py": "x=1\n"})
+
+    assert proposal.changes == {"loose.py": "x = 1\n"}
+    assert proposal.report.passed is True
+    assert proposal.report.check("ruff_format").passed is True
+
+
+@requires_tools
+def test_apply_writes_the_formatted_content(workspace: Path) -> None:
+    manager = ProposalManager(workspace)
+    proposal = manager.propose({"loose.py": "x=1\n"})
+    manager.approve(proposal.proposal_id, "jean")
+
+    manager.apply(proposal.proposal_id)
+
+    assert (workspace / "loose.py").read_text(encoding="utf-8") == "x = 1\n"
+
+
 def test_non_python_change_applies_after_approval(workspace: Path) -> None:
     manager = ProposalManager(workspace)
     proposal = manager.propose({"notes/todo.txt": "hello\n"})

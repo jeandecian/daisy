@@ -1,10 +1,15 @@
-"""Tests for the pre-flight checks engine (ruff and mypy)."""
+"""Tests for the pre-flight checks engine (ruff and mypy) and Python auto-formatting."""
 
 import importlib.util
 
 import pytest
 
-from daisy.preflight import PreflightInputError, run_preflight, validate_relpath
+from daisy.preflight import (
+    PreflightInputError,
+    autoformat_python,
+    run_preflight,
+    validate_relpath,
+)
 
 requires_tools = pytest.mark.skipif(
     importlib.util.find_spec("ruff") is None or importlib.util.find_spec("mypy") is None,
@@ -90,3 +95,38 @@ def test_type_error_is_reported() -> None:
     assert types.passed is False
     assert any(": error:" in error for error in types.errors)
     assert report.passed is False
+
+
+@requires_tools
+def test_autoformat_rewrites_loose_python() -> None:
+    formatted = autoformat_python({"loose.py": "x=1\n"})
+
+    assert formatted == {"loose.py": "x = 1\n"}
+
+
+@requires_tools
+def test_autoformat_makes_format_check_pass() -> None:
+    formatted = autoformat_python({"loose.py": "x=1\n"})
+    report = run_preflight(formatted)
+
+    assert report.check("ruff_format").passed is True
+    assert report.check("ruff_check").passed is True
+
+
+def test_autoformat_leaves_non_python_untouched() -> None:
+    changes = {"notes.txt": "x=1\n"}
+
+    assert autoformat_python(changes) == changes
+
+
+@requires_tools
+def test_autoformat_keeps_content_when_python_has_syntax_error() -> None:
+    broken = "def (:\n"
+
+    assert autoformat_python({"broken.py": broken}) == {"broken.py": broken}
+
+
+@requires_tools
+def test_autoformat_rejects_unsafe_path() -> None:
+    with pytest.raises(PreflightInputError):
+        autoformat_python({"../evil.py": "x=1\n"})
